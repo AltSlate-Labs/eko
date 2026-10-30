@@ -123,6 +123,9 @@ final class Updater: ObservableObject {
         } else { throw UpdateError.notConfigured }
         let (data, response) = try await session.data(from: url)
         guard let http = response as? HTTPURLResponse else { throw UpdateError.badResponse("no HTTP response") }
+        guard http.statusCode != 404 else {
+            throw UpdateError.badResponse("404 for \(Self.repository ?? "the feed"): the repository is private or has no published release. Re-run the installer to update.")
+        }
         guard http.statusCode == 200 else { throw UpdateError.badResponse("HTTP \(http.statusCode) for \(url.lastPathComponent)") }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let tag = json["tag_name"] as? String,
