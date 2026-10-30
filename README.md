@@ -32,6 +32,17 @@ It downloads the latest release DMG, verifies its SHA-256 against the release, c
 Applications and launches it. Re-running it later installs the newest version over the old one;
 settings, permissions and recordings are kept. Continue with [First-run setup](#first-run-setup).
 
+**While this repository is private**, GitHub needs a login for both the script and the release.
+Collaborators with the GitHub CLI installed and signed in (`gh auth login`) run this instead:
+
+```sh
+git clone https://github.com/AltSlate-Labs/eko.git && cd eko
+GITHUB_TOKEN=$(gh auth token) sh scripts/get-eko.sh
+```
+
+The in-app update check also needs anonymous access, so on a private repository it stays quiet;
+re-run the two lines above to update.
+
 Why a script rather than just double-clicking the DMG: releases are signed with the project's own
 certificate, not an Apple Developer ID, so macOS shows "Apple could not verify…" for a manually
 downloaded copy. The script clears that internet-download flag after checking the checksum. Only
@@ -48,7 +59,7 @@ script is no longer needed.
 ## Install from source
 
 ```sh
-git clone <repo-url> eko && cd eko
+git clone https://github.com/AltSlate-Labs/eko.git && cd eko
 ./scripts/install.sh
 ```
 
