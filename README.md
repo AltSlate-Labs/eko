@@ -22,7 +22,7 @@ Slack, FaceTime, …) into one audio file: everything the Mac plays, whichever o
 
 ## Download (no build tools needed)
 
-1. Download `Eko-<version>.dmg` from the project's GitHub Releases page and open it.
+1. Download `Eko-<version>.dmg` from https://github.com/AltSlate-Labs/eko/releases/latest and open it.
 2. Drag **Eko** onto the **Applications** shortcut in the window that appears, then eject the image.
 3. Open Eko from Applications (or Cmd+Space, "Eko"). Continue with [First-run setup](#first-run-setup).
 
