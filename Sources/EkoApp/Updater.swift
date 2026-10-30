@@ -257,6 +257,12 @@ final class Updater: ObservableObject {
         try check(SecCodeCopyStaticCode(selfCode!, [], &selfStatic), "own code")
         var requirement: SecRequirement?
         try check(SecCodeCopyDesignatedRequirement(selfStatic!, [], &requirement), "own requirement")
+        var requirementText: CFString?
+        if SecRequirementCopyString(requirement!, [], &requirementText) == errSecSuccess,
+           (requirementText as String?)?.contains("cdhash") == true {
+            // Ad-hoc signature: the requirement names this exact binary, so no update can ever match.
+            throw UpdateError.signature("This copy of Eko is an unsigned build that cannot verify updates. Reinstall it from the release page once; signed builds update themselves.")
+        }
         var candidate: SecStaticCode?
         try check(SecStaticCodeCreateWithPath(bundle as CFURL, [], &candidate), "candidate")
         let flags = SecCSFlags(rawValue: kSecCSCheckAllArchitectures | kSecCSStrictValidate | kSecCSCheckNestedCode)

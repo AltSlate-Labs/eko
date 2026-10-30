@@ -239,3 +239,10 @@ requirement (same bundle id + certificate/Team ID) → version check → rename 
 old copy to Trash as "Eko <old>.app" → relaunch through /bin/sh + open. Tested end to end with a
 local feed (EKO_UPDATE_FEED, development only): dev-signed 0.1.1 installs; ad-hoc 0.1.2 rejected.
 Release tags must be `v<VERSION>`; UPDATE_REPO in scripts/bundle.sh must match the GitHub repo.
+
+Free distribution path (2026-10-30): `scripts/get-eko.sh` one-line installer (latest release →
+sha256 check → clear quarantine → /Applications → launch; GITHUB_TOKEN for private repos,
+EKO_VERSION to pin), `scripts/release.sh --local` (universal DMG signed with the stable "Eko Dev"
+certificate, no notarization). The in-app updater works with that certificate because it compares
+the update against the running app's own designated requirement; ad-hoc builds (like the 0.1.0
+pre-release) cannot update and now say so. The certificate is the trust root: back it up.

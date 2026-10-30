@@ -20,18 +20,30 @@ Slack, FaceTime, …) into one audio file: everything the Mac plays, whichever o
   xcode-select --install
   ```
 
-## Download (no build tools needed)
+## Install (no build tools needed)
 
-1. Download `Eko-<version>.dmg` from https://github.com/AltSlate-Labs/eko/releases/latest and open it.
-2. Drag **Eko** onto the **Applications** shortcut in the window that appears, then eject the image.
-3. Open Eko from Applications (or Cmd+Space, "Eko"). Continue with [First-run setup](#first-run-setup).
+Paste this into Terminal:
 
-Release images are a universal binary (Apple Silicon and Intel), signed with a Developer ID
-certificate and notarized by Apple, so macOS opens them like any other downloaded app. If you
-open Eko straight from the disk image instead of Applications it asks you to install it first.
-To check a download: `shasum -a 256 Eko-<version>.dmg` must match the `.sha256` file on the
-release, and `spctl --assess --type open --context context:primary-signature -v Eko-<version>.dmg`
-must print `accepted`.
+```sh
+curl -fsSL https://raw.githubusercontent.com/AltSlate-Labs/eko/main/scripts/get-eko.sh | sh
+```
+
+It downloads the latest release DMG, verifies its SHA-256 against the release, copies Eko to
+Applications and launches it. Re-running it later installs the newest version over the old one;
+settings, permissions and recordings are kept. Continue with [First-run setup](#first-run-setup).
+
+Why a script rather than just double-clicking the DMG: releases are signed with the project's own
+certificate, not an Apple Developer ID, so macOS shows "Apple could not verify…" for a manually
+downloaded copy. The script clears that internet-download flag after checking the checksum. Only
+run it if you trust this repository. If you prefer the manual way: download `Eko-<version>.dmg`
+from https://github.com/AltSlate-Labs/eko/releases/latest, run
+`xattr -d com.apple.quarantine ~/Downloads/Eko-<version>.dmg`, open it, drag **Eko** onto the
+**Applications** shortcut, eject, and open Eko from Applications. Opening Eko straight from the
+disk image asks you to install it first.
+
+Release images are a universal binary (Apple Silicon and Intel). Should a release ever be signed
+with an Apple Developer ID and notarized, the DMG opens like any other downloaded app and the
+script is no longer needed.
 
 ## Install from source
 
@@ -90,11 +102,12 @@ playing, so the first half second of the very first sound can be missed otherwis
 request; turn it off with *Check for Updates Daily* in the menu, or check by hand with
 *Check for Updates…*). When a newer version exists the menu shows **Update Available: Eko x.y.z**.
 Click it to see the version and release notes, then **Download and Install**: Eko downloads
-the DMG, opens it, verifies that the new app is signed by the same publisher as the running
-copy (same bundle identifier and Team ID, checked by macOS's code-signing APIs; anything else is
-refused and nothing changes), swaps it into place, moves the old version to the Trash and
-relaunches. Settings, permissions and recordings are kept. Updates wait until you stop a
-recording. You can always install a new DMG by hand instead.
+the DMG, opens it, verifies that the new app is signed with the same certificate as the running
+copy (same bundle identifier and signing certificate, checked by macOS's code-signing APIs;
+anything else is refused and nothing changes), swaps it into place, moves the old version to the
+Trash and relaunches. No Gatekeeper dialog appears because the app installs the update itself.
+Settings, permissions and recordings are kept. Updates wait until you stop a recording. You can
+always re-run the install command instead; it does the same thing.
 
 From source:
 
@@ -103,8 +116,9 @@ git pull
 ./scripts/install.sh
 ```
 
-Source builds signed with the local "Eko Dev" certificate also keep their permissions, but
-they cannot self-update from the published DMGs (different publisher by design).
+A source build on another machine is signed with that machine's own certificate, so it keeps
+its permissions across rebuilds but will not accept the published DMGs as updates (different
+certificate by design); update it with `git pull` as above.
 
 ## Uninstall
 
@@ -148,16 +162,34 @@ EKO_DEBUG=1 .build/release/eko   # diagnostics on stderr
 
 ## Releasing (maintainers)
 
-`./scripts/release.sh` produces `dist/Eko-<version>.dmg` plus a `.sha256` file: it runs the
-tests, builds a universal binary, signs it with the hardened runtime and
-`Resources/Eko.entitlements`, notarizes and staples the app, wraps it in a signed DMG, notarizes
-and staples that too, and finishes with the same Gatekeeper checks a user's Mac performs.
-Nothing is uploaded; attach the DMG and `.sha256` to a GitHub Release for the tag. The in-app
-updater reads that repository's latest release: `UPDATE_REPO` at the top of `scripts/bundle.sh`
-(default `AltSlate-Labs/eko`, baked into Info.plist as `EkoUpdateRepository`) must name the GitHub
-`owner/name` that hosts the releases, and the release tag must be `v<VERSION>`.
+Releases are built on one Mac and signed with one certificate that never changes. Installed
+copies accept an update only if it is signed with the same certificate as the copy they are
+running, so the certificate is the trust root for every user: back it up (Keychain Access →
+export "Eko Dev" as a password-protected `.p12`) and never regenerate it.
 
-One-time setup, all outside the repository:
+```sh
+./scripts/make-signing-cert.sh          # once per build machine
+vi VERSION                               # bump, e.g. 0.1.1
+./scripts/release.sh --local             # tests, universal build, signed DMG + .sha256 in dist/
+git commit -am "0.1.1" && git push
+git tag v0.1.1 && git push origin v0.1.1
+gh release create v0.1.1 dist/Eko-0.1.1.dmg dist/Eko-0.1.1.dmg.sha256 --title "Eko 0.1.1"
+```
+
+The release tag must be `v<VERSION>`, the repository must be public for the installer and the
+updater to reach it, and releases marked *pre-release* are ignored by both (GitHub's "latest"
+release excludes them). `UPDATE_REPO` at the top of `scripts/bundle.sh` (default
+`AltSlate-Labs/eko`, baked into Info.plist as `EkoUpdateRepository`) must name the GitHub
+`owner/name` that hosts the releases.
+
+### Notarized releases (optional, Apple Developer Program)
+
+`./scripts/release.sh` without `--local` produces the same DMG signed with a Developer ID
+certificate and notarized: it notarizes and staples the app, wraps it in a signed DMG, notarizes
+and staples that too, and finishes with the Gatekeeper checks a user's Mac performs. Such a DMG
+opens by double-click without the install script. Switching an existing user base to a Developer
+ID is a one-time reinstall for them, because the certificate changes. One-time setup, all outside
+the repository:
 
 1. Join the Apple Developer Program and create a **Developer ID Application** certificate
    (developer.apple.com → Certificates; make the signing request in Keychain Access → Certificate
@@ -170,13 +202,9 @@ One-time setup, all outside the repository:
    xcrun notarytool store-credentials eko-notary --apple-id <apple-id> --team-id <TEAMID>
    ```
 
-3. Per release: bump `VERSION`, run `./scripts/release.sh`, test the DMG on a clean user
-   account, tag the commit (`git tag v$(cat VERSION)`), and publish the release.
+3. Per release: the same commands as above without `--local`.
 
-Only the Command Line Tools are needed; `notarytool` and `stapler` ship with them. Local
-development keeps using the self-signed "Eko Dev" certificate; release builds are the same code
-signed with the Developer ID, so permissions survive the switch only for users of the signed
-build, not between a source build and a downloaded one.
+Only the Command Line Tools are needed; `notarytool` and `stapler` ship with them.
 
 ## How it works
 
@@ -206,10 +234,11 @@ Sources/EkoCore   MicCapture, SystemAudioCapture (tap), MixBus, AudioFileWriter,
 Sources/eko       command-line recorder
 Sources/EkoApp    SwiftUI menu-bar app, nudge panel, Carbon global hotkey, self-updater
 Tests/EkoCoreTests
+scripts/get-eko.sh        one-line installer: latest release DMG → checksum → /Applications
 scripts/install.sh        build + sign + copy to /Applications + launch (from source)
 scripts/bundle.sh         build and sign build/Eko.app (UNIVERSAL=1, APP_NAME, SIGN_IDENTITY)
 scripts/make-dmg.sh       wrap build/Eko.app in a signed dist/Eko-<version>.dmg
-scripts/release.sh        signed + notarized universal DMG for GitHub Releases
+scripts/release.sh        universal DMG for GitHub Releases (--local: own certificate; default: notarized)
 scripts/make-signing-cert.sh   local "Eko Dev" certificate for development builds
 scripts/uninstall.sh
 Resources/Eko.entitlements     hardened-runtime entitlements (microphone only)
