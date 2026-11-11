@@ -4,7 +4,7 @@ import Foundation
 
 func usage() -> Never {
     print("""
-    eko — record system audio + microphone into one file
+    eko — record your microphone (left channel) and system audio (right channel) into one file
 
     usage: eko [--out DIR] [--wav] [--seconds N] [--mic-gain G] [--system-gain G]
            eko --devices      show default input/output devices
@@ -62,6 +62,9 @@ func log(_ s: String) {
     FileHandle.standardError.write("[\(t.string(from: Date()))] \(s)\n".data(using: .utf8)!)
 }
 
+if RecordingOptions.syncsToICloud(options.outputDirectory) {
+    log("WARNING: \(options.outputDirectory.path) syncs to iCloud, so recordings leave this Mac. Use --out with a folder outside Desktop and Documents to keep them local.")
+}
 let session = RecordingSession(options: options)
 var stopping = false
 

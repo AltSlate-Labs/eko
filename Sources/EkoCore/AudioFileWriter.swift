@@ -52,6 +52,8 @@ public final class AudioFileWriter {
             commonFormat: .pcmFormatFloat32,
             interleaved: false
         )
+        // Owner-only, like the folder Eko creates: a call recording is private.
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         self.file = file
         self.targetFormat = file.processingFormat
     }

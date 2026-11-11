@@ -72,8 +72,12 @@ struct MenuContent: View {
         Button("Show Last Recording") { model.revealLastRecording() }
             .disabled(model.lastRecording == nil)
         Button("Open Recordings Folder") { model.openFolder() }
-        Menu("Recordings Folder: \(model.outputDirectory.lastPathComponent)") {
+        Menu("Recordings Folder: \(model.outputDirectory.lastPathComponent)" + (model.folderSyncsToICloud ? " (syncs to iCloud)" : "")) {
             Text(model.outputDirectory.path)
+            if model.folderSyncsToICloud {
+                Text("⚠︎ This folder syncs to iCloud, so recordings leave this Mac.")
+                Text("Choose a folder outside Desktop and Documents to keep them local.")
+            }
             Button("Change…") { model.chooseFolder() }.disabled(model.isRecording)
             Button("Reset to Default (~/Documents/CallRecordings)") { model.resetFolder() }.disabled(model.isRecording || model.isDefaultFolder)
         }

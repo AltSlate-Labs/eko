@@ -33,6 +33,16 @@ public struct RecordingOptions {
             .appendingPathComponent("Documents", isDirectory: true)
             .appendingPathComponent("CallRecordings", isDirectory: true)
     }
+
+    /// True when files saved in `folder` are uploaded to iCloud Drive (for example ~/Documents with
+    /// "Desktop & Documents Folders" turned on). Checks the nearest existing folder on the path.
+    public static func syncsToICloud(_ folder: URL) -> Bool {
+        var url = folder.standardizedFileURL
+        while !FileManager.default.fileExists(atPath: url.path), url.pathComponents.count > 1 {
+            url.deleteLastPathComponent()
+        }
+        return (try? url.resourceValues(forKeys: [.isUbiquitousItemKey]))?.isUbiquitousItem == true
+    }
 }
 
 public enum RecordingEvent {
@@ -160,7 +170,7 @@ public final class RecordingSession {
     }
 
     private func beginRecording() throws {
-        try FileManager.default.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: options.outputDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
         let start = Date()
         startedAt = start
         appsSeen = [:]
@@ -398,10 +408,12 @@ public enum RecordingNamer {
             "durationSeconds": (duration * 10).rounded() / 10,
             "appsHeard": apps.keys.sorted(),
             "capture": capture,
+            "channels": MixBus.channelLayout,
             "format": format.rawValue,
             "recorder": "eko",
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys]) else { return }
-        try? data.write(to: url.deletingPathExtension().appendingPathExtension("json"))
+        let path = url.deletingPathExtension().appendingPathExtension("json").path
+        FileManager.default.createFile(atPath: path, contents: data, attributes: [.posixPermissions: 0o600])
     }
 }
