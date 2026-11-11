@@ -11,6 +11,13 @@ struct MixBusTests {
         return b
     }
 
+    /// Stereo buffer with a different constant per channel.
+    private func stereo(left: Float, right: Float, count: Int) -> AVAudioPCMBuffer {
+        let b = buffer([Float](repeating: left, count: count), channels: 2)
+        for i in 0..<count { b.floatChannelData![1][i] = right }
+        return b
+    }
+
     @Test func alignsSystemAudioToMicTimelineAndFillsSilenceWhenAbsent() throws {
         let bus = MixBus(sampleRate: 48_000, ringSeconds: 1)
         let t0 = HostClock.now()
@@ -30,12 +37,36 @@ struct MixBusTests {
         clock = t0 + 10 * tick
         bus.finish()
 
-        #expect(output[0].count == 1440)
-        #expect(abs(output[0][0] - 0.1) < 1e-6)       // mic only
-        #expect(abs(output[1][959] - 0.1) < 1e-6)     // still mic only right before system audio
-        #expect(abs(output[0][960] - 0.7) < 1e-6)     // mic 0.2 + system 0.5
-        #expect(abs(output[1][1439] - 0.7) < 1e-6)
+        // Left = microphone only, right = system audio only (split-v1).
+        #expect(output[0].count == 1440 && output[1].count == 1440)
+        #expect(abs(output[0][0] - 0.1) < 1e-6)
+        #expect(abs(output[0][959] - 0.1) < 1e-6)
+        #expect(abs(output[0][960] - 0.2) < 1e-6)     // system audio never reaches the mic channel
+        #expect(abs(output[0][1439] - 0.2) < 1e-6)
+        #expect(output[1][0] == 0)                     // silence before system audio arrives
+        #expect(output[1][959] == 0)                   // mic never reaches the system channel
+        #expect(abs(output[1][960] - 0.5) < 1e-6)
+        #expect(abs(output[1][1439] - 0.5) < 1e-6)
         #expect(bus.framesMixed == 1440)
+    }
+
+    @Test func downmixesStereoSystemAudioToMonoOnTheRightChannel() throws {
+        let bus = MixBus(sampleRate: 48_000, ringSeconds: 1)
+        let t0 = HostClock.now()
+        var clock = t0
+        bus.now = { clock }
+        var output: [[Float]] = [[], []]
+        bus.onOutput = { out in
+            for c in 0..<2 { output[c] += Array(UnsafeBufferPointer(start: out.floatChannelData![c], count: Int(out.frameLength))) }
+        }
+        bus.pushSystem(stereo(left: 0.4, right: 0.2, count: 480), hostTime: t0)
+        bus.pushMic(buffer([Float](repeating: 0.1, count: 480), channels: 1), hostTime: t0)
+        clock = t0 + HostClock.ticks(seconds: 1)
+        bus.finish()
+        #expect(output[1].count == 480)
+        #expect(abs(output[0][100] - 0.1) < 1e-6)
+        #expect(abs(output[1][100] - 0.3) < 1e-6)     // (0.4 + 0.2) / 2
+        #expect(MixBus.channelLayout == "split-v1")
     }
 
     @Test func lateSystemAudioAfterMixIsDroppedNotReplayed() throws {
@@ -44,8 +75,8 @@ struct MixBusTests {
         var clock = t0
         bus.now = { clock }
         var peak: Float = 0
-        bus.onOutput = { out in
-            for i in 0..<Int(out.frameLength) { peak = max(peak, abs(out.floatChannelData![0][i])) }
+        bus.onOutput = { out in   // channel 1 carries system audio
+            for i in 0..<Int(out.frameLength) { peak = max(peak, abs(out.floatChannelData![1][i])) }
         }
         let tick = HostClock.ticks(seconds: 0.01)
         bus.pushMic(buffer([Float](repeating: 0, count: 480), channels: 1), hostTime: t0)
@@ -67,6 +98,26 @@ struct MixBusTests {
         FileManager.default.createFile(atPath: first.path, contents: Data())
         let second = RecordingNamer.url(in: dir, date: date, app: "Zoom: Weekly/Sync", ext: "m4a")
         #expect(second.lastPathComponent.hasSuffix(" Zoom Weekly Sync (2).m4a"))
+    }
+
+    @Test func sidecarRecordsChannelLayoutAndIsPrivate() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("eko-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let audio = dir.appendingPathComponent("call.m4a")
+        RecordingNamer.writeSidecar(for: audio, start: Date(), end: Date(), duration: 1, apps: ["Zoom": 1], capture: "test", format: .aac)
+        let sidecar = dir.appendingPathComponent("call.json")
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: sidecar)) as? [String: Any]
+        #expect(json?["channels"] as? String == "split-v1")
+        let mode = try FileManager.default.attributesOfItem(atPath: sidecar.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
+    }
+
+    @Test func recordingFileIsPrivate() throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("eko-test-\(UUID().uuidString).m4a")
+        let writer = try AudioFileWriter(url: url, format: .aac)
+        _ = writer.finish()
+        let mode = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? Int
+        #expect(mode == 0o600)
     }
 }
 

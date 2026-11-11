@@ -35,7 +35,11 @@ final class RecorderModel: ObservableObject {
     }
     @Published private(set) var detectedCall: String?
 
-    @Published private(set) var outputDirectory: URL
+    @Published private(set) var outputDirectory: URL {
+        didSet { folderSyncsToICloud = RecordingOptions.syncsToICloud(outputDirectory) }
+    }
+    /// Recordings saved here leave the Mac (iCloud Drive "Desktop & Documents"); shown in the menu.
+    @Published private(set) var folderSyncsToICloud = false
     private var session: RecordingSession
     private var ticker: Timer?
     private var hotKey: GlobalHotKey?
@@ -47,6 +51,9 @@ final class RecorderModel: ObservableObject {
         let saved = UserDefaults.standard.string(forKey: "outputDirectory").map { URL(fileURLWithPath: $0, isDirectory: true) }
         let folder = saved ?? RecordingOptions.defaultDirectory
         outputDirectory = folder
+        let syncs = RecordingOptions.syncsToICloud(folder)
+        folderSyncsToICloud = syncs
+        if syncs { RecordingSession.dlog("recordings folder syncs to iCloud: \(folder.path)") }
         session = RecordingSession(options: RecordingOptions(outputDirectory: folder))
         launchAtLogin = SMAppService.mainApp.status == .enabled
         Self.current = self

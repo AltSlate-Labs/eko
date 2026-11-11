@@ -1,12 +1,15 @@
 # Eko
 
 Minimal native macOS menu-bar utility that records your calls (Zoom, Google Meet, Teams,
-Slack, FaceTime, …) into one audio file: everything the Mac plays, whichever output is active
-(speakers, monitor, earphones, AirPods), mixed with the active microphone.
+Slack, FaceTime, …) into one stereo audio file: the active microphone (you) on the left channel,
+everything the Mac plays (the other side), whichever output is active (speakers, monitor,
+earphones, AirPods), on the right.
 
 - One click or one hotkey to start/stop; a floating prompt offers to record when a call starts
 - Output: `~/Documents/CallRecordings/yyyy-MM-dd HH-mm <App>.m4a` (AAC 48 kHz stereo, about
-  1 MB per minute) plus a small `.json` sidecar with times and the call app heard
+  1 MB per minute; left = you, right = the other side) plus a small `.json` sidecar with times,
+  the call app heard and the channel layout (`"channels": "split-v1"`). Both are readable only
+  by you
 - Native Swift, no third-party dependencies, no Xcode needed, ~1 MB download, nothing leaves the Mac
 
 ## Requirements
@@ -99,7 +102,15 @@ Both permissions are asked only once thanks to the local certificate.
   *When a call starts* can switch this to automatic start and/or stop.
 - **Recordings folder**: default `~/Documents/CallRecordings`. Change it from the menu
   (*Recordings Folder → Change…*); the choice is remembered and applies to the next recording.
-  The CLI uses `--out DIR`.
+  The CLI uses `--out DIR`. If iCloud Drive syncs the folder (its *Desktop & Documents
+  Folders* option, in System Settings under your Apple Account → iCloud), the menu says
+  *(syncs to iCloud)*: recordings then leave the Mac. Pick a folder outside Desktop and
+  Documents to keep them local.
+- **Listening**: each side is on its own channel, so on headphones you hear yourself in the left
+  ear and the others in the right. Turn on System Settings → Accessibility → Audio → *Play stereo
+  audio as mono* to hear both in both ears, or make a blended copy:
+  `afconvert --mix -c 1 -f WAVE -d LEI16 call.m4a /tmp/mix.wav && afconvert -f m4af -d aac /tmp/mix.wav "call (mixed).m4a"`.
+  Recordings made before 0.1.2 have both sides blended into both channels.
 - **Icon**: heavy waveform when idle; solid red dot with elapsed time while recording.
 - **Updates**: *Check for Updates…* in the menu, or the daily check; see [Update](#update).
 - **Quit** while recording stops and saves first.
@@ -229,9 +240,10 @@ Two independent captures feed one time-aligned mixer:
   waited on: its buffers are placed into the mix by HAL host timestamp whenever they arrive, and
   silence is written for any stretch where nothing played.
 
-`MixBus` does the alignment and summing (system stereo + mic mono, clamped) and an
-`AVAudioFile` encodes AAC on the fly. Call detection polls the Core Audio process list for
-known call apps holding an input device. See `PLAN.md` for the alternatives considered.
+`MixBus` does the alignment and the channel layout (left: mic; right: system audio downmixed to
+mono; clamped) and an `AVAudioFile` encodes AAC on the fly. Keeping the sides apart lets a
+transcript tell speakers apart; a blended copy can always be made from it, the reverse cannot.
+Call detection polls the Core Audio process list for known call apps holding an input device. See `PLAN.md` for the alternatives considered.
 
 Two Core Audio quirks worth knowing if you touch the capture code: setting `name` or
 `isExclusive` on `CATapDescription` makes the aggregate never run on macOS 15.5, and
@@ -259,7 +271,9 @@ PLAN.md               design notes and the options that were considered
 
 ## Privacy and consent
 
-Recordings and settings stay on your Mac. The only network access is the daily update check
-(a request to api.github.com for the latest release, then the DMG download when you choose to
+Recordings and settings stay on your Mac (unless the recordings folder syncs to iCloud; the menu
+warns when it does). New recordings and sidecars are created readable only by you, and a
+recordings folder Eko creates is private to you. The only network access is the daily update
+check (a request to api.github.com for the latest release, then the DMG download when you choose to
 install); switch it off with *Check for Updates Daily* in the menu. Recording calls may require the consent of all participants
 depending on where you and they are; the app does not announce itself. That is on you.

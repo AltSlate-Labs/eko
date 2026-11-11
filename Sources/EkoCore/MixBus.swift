@@ -9,7 +9,13 @@ import Foundation
 /// late, pause, or restart. Each stream is placed contiguously once anchored and re-anchored
 /// only when its timestamps jump. Output is stereo float at `sampleRate`, delivered after a
 /// short latency so that system audio for the same instant has had time to arrive.
+///
+/// Channel layout (`channelLayout`): left = microphone (you), right = system audio downmixed to
+/// mono (everyone else). Keeping the two sides apart lets a transcript tell speakers apart; a
+/// blended copy can always be made later, the reverse is impossible.
 public final class MixBus {
+    /// Recorded in each recording's sidecar `.json` as `"channels"`.
+    public static let channelLayout = "split-v1"
     public let sampleRate: Double
     public let format: AVAudioFormat
     public var micGain: Float = 1
@@ -165,9 +171,8 @@ public final class MixBus {
             for i in 0..<n {
                 let position = micHead + Int64(consumed + i)
                 let slot = Int(position % Int64(ringFrames))
-                let m = micSamples[consumed + i]
-                outL[i] = min(1, max(-1, ringL[slot] + m))
-                outR[i] = min(1, max(-1, ringR[slot] + m))
+                outL[i] = min(1, max(-1, micSamples[consumed + i]))
+                outR[i] = min(1, max(-1, (ringL[slot] + ringR[slot]) * 0.5))
                 ringL[slot] = 0
                 ringR[slot] = 0
             }
