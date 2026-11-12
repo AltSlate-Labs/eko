@@ -10,7 +10,20 @@ earphones, AirPods), on the right.
   1 MB per minute; left = you, right = the other side) plus a small `.json` sidecar with times,
   the call app heard and the channel layout (`"channels": "split-v1"`). Both are readable only
   by you
-- Native Swift, no third-party dependencies, no Xcode needed, ~1 MB download, nothing leaves the Mac
+- Native Swift, no third-party dependencies, no Xcode needed, ~1 MB download, no cloud service
+
+## Quick start
+
+1. Install: paste into Terminal (details in [Install](#install-no-build-tools-needed))
+
+   ```sh
+   curl -fsSL https://raw.githubusercontent.com/AltSlate-Labs/eko/main/scripts/get-eko.sh | sh
+   ```
+
+2. Record: click the waveform icon in the menu bar → **Start Recording** (or press **⌃⌥⌘R**),
+   and approve the Microphone and System Audio prompts the first time
+   ([First-run setup](#first-run-setup)).
+3. Stop: **Stop Recording** (or ⌃⌥⌘R again). **Show Last Recording** opens the file.
 
 ## Requirements
 
@@ -34,17 +47,6 @@ curl -fsSL https://raw.githubusercontent.com/AltSlate-Labs/eko/main/scripts/get-
 It downloads the latest release DMG, verifies its SHA-256 against the release, copies Eko to
 Applications and launches it. Re-running it later installs the newest version over the old one;
 settings, permissions and recordings are kept. Continue with [First-run setup](#first-run-setup).
-
-**While this repository is private**, GitHub needs a login for both the script and the release.
-Collaborators with the GitHub CLI installed and signed in (`gh auth login`) run this instead:
-
-```sh
-git clone https://github.com/AltSlate-Labs/eko.git && cd eko
-GITHUB_TOKEN=$(gh auth token) sh scripts/get-eko.sh
-```
-
-The in-app update check also needs anonymous access, so on a private repository it stays quiet;
-re-run the two lines above to update.
 
 Why a script rather than just double-clicking the DMG: releases are signed with the project's own
 certificate, not an Apple Developer ID, so macOS shows "Apple could not verify…" for a manually
@@ -145,10 +147,13 @@ certificate by design); update it with `git pull` as above.
 ## Uninstall
 
 ```sh
-./scripts/uninstall.sh
+curl -fsSL https://raw.githubusercontent.com/AltSlate-Labs/eko/main/scripts/uninstall.sh | zsh
 ```
 
-Removes the app, its settings, the certificate and its privacy grants. Recordings are kept.
+(or `./scripts/uninstall.sh` from a source checkout). Removes the app, its settings, its log, the
+local "Eko Dev" certificate and its privacy grants. Recordings are kept. Maintainers: this also
+deletes the release signing certificate, so export a backup first (see
+[Releasing](#releasing-maintainers)).
 
 ## Troubleshooting
 
@@ -161,8 +166,8 @@ Removes the app, its settings, the certificate and its privacy grants. Recording
   Chrome, Safari, Arc, Brave, Edge, Firefox.
 - **Spurious prompt.** Any site using the microphone in a browser looks like a call. Click
   *Not now*, or turn the prompt off under *When a call starts*.
-- **"Eko can't be opened" / unidentified developer.** Only happens if the app was downloaded
-  rather than built here. Build it with `install.sh`, or run
+- **"Eko can't be opened" / "Apple could not verify…".** Happens when the DMG was downloaded and
+  opened by hand. Install with the one-line command instead, or run
   `xattr -dr com.apple.quarantine /Applications/Eko.app`.
 - **Echo of the remote side.** With speakers plus the built-in mic the remote voice is also
   picked up by the mic. Use headphones.
@@ -171,7 +176,8 @@ Removes the app, its settings, the certificate and its privacy grants. Recording
 
 ## Command line
 
-The same engine is available as a CLI after `swift build -c release`:
+The same engine is available as a CLI. It is not part of the DMG; build it in a source checkout
+(Command Line Tools needed) with `swift build -c release`:
 
 ```sh
 .build/release/eko                   # record until Ctrl-C
@@ -191,11 +197,11 @@ export "Eko Dev" as a password-protected `.p12`) and never regenerate it.
 
 ```sh
 ./scripts/make-signing-cert.sh          # once per build machine
-vi VERSION                               # bump, e.g. 0.1.1
+vi VERSION                               # bump, e.g. 0.1.3
 ./scripts/release.sh --local             # tests, universal build, signed DMG + .sha256 in dist/
-git commit -am "0.1.1" && git push
-git tag v0.1.1 && git push origin v0.1.1
-gh release create v0.1.1 dist/Eko-0.1.1.dmg dist/Eko-0.1.1.dmg.sha256 --title "Eko 0.1.1"
+git commit -am "0.1.3" && git push
+git tag v0.1.3 && git push origin v0.1.3
+gh release create v0.1.3 dist/Eko-0.1.3.dmg dist/Eko-0.1.3.dmg.sha256 --title "Eko 0.1.3"
 ```
 
 The release tag must be `v<VERSION>`, the repository must be public for the installer and the
@@ -274,6 +280,7 @@ PLAN.md               design notes and the options that were considered
 Recordings and settings stay on your Mac (unless the recordings folder syncs to iCloud; the menu
 warns when it does). New recordings and sidecars are created readable only by you, and a
 recordings folder Eko creates is private to you. The only network access is the daily update
-check (a request to api.github.com for the latest release, then the DMG download when you choose to
-install); switch it off with *Check for Updates Daily* in the menu. Recording calls may require the consent of all participants
-depending on where you and they are; the app does not announce itself. That is on you.
+check (a request to api.github.com for the latest release, then the DMG download when you choose
+to install); switch it off with *Check for Updates Daily* in the menu. Recording calls may
+require the consent of all participants depending on where you and they are; the app does not
+announce itself. That is on you.
