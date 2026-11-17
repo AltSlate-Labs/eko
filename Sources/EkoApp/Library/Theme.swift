@@ -51,6 +51,12 @@ extension RecordingItem {
 
     var fileName: String { url.lastPathComponent }
 
+    /// Always in MB with one decimal ("0.2 MB", "136.7 MB"), so sizes line up and compare at a glance.
+    static func megabytes(_ bytes: Int64) -> String { String(format: "%.1f MB", Double(bytes) / 1_000_000) }
+
+    /// The summary's title when there is one, else "Chrome call".
+    var heading: String { summaryTitle ?? title }
+
     /// A monochrome glyph for the app the call was in.
     var glyph: String {
         switch (apps.first ?? name).lowercased() {

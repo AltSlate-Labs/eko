@@ -182,6 +182,48 @@ struct SummaryDocumentTests {
         #expect(doc.markdown.contains("**Decisions**\n- Ship v1 on the 17th [00:12:03]"))
     }
 
+    @Test func summaryTitleIsReadAndKeptOutOfTheText() {
+        let file = SummaryPrompt.renderFile(recording: "x.m4a", engine: "Gemini", promptSource: "built-in default",
+                                            body: "TITLE: Toast POS data and monthly uploads\n\n" + Self.body, check: .init(cited: 0, matched: 0))
+        let doc = SummaryDocument.parse(file)
+        #expect(doc.title == "Toast POS data and monthly uploads")
+        #expect(doc.body == Self.body)
+        #expect(doc.sections.map(\.title) == ["Summary", "Decisions", "Action Items", "Open Questions", "Follow-ups"])
+        #expect(doc.markdown.hasPrefix("**Toast POS data and monthly uploads**\n\n**Summary**"))
+        #expect(SummaryDocument.parse(SummaryPrompt.renderFile(recording: "x.m4a", engine: "Gemini", promptSource: "p",
+                                                               body: Self.body, check: .init(cited: 0, matched: 0))).title == nil)
+    }
+
+    @Test func titleLineVariants() {
+        #expect(SummaryDocument.titleLine("**Title:** \"Pricing for v1.\"") == "Pricing for v1")
+        #expect(SummaryDocument.titleLine("TITLE:   Hiring   plan ") == "Hiring plan")
+        #expect(SummaryDocument.titleLine("TITLE: None stated.") == nil)
+        #expect(SummaryDocument.titleLine("Titles were discussed") == nil)
+        #expect(SummaryDocument.titleLine("TITLE: " + String(repeating: "word ", count: 40))!.count <= 91)
+        #expect(SummaryPrompt.defaultTemplate.contains("TITLE:"))
+    }
+
+    @Test func listShowsAndSearchesTheSummaryTitle() throws {
+        let dir = TempDir()
+        let a = dir.url.appendingPathComponent("2026-11-13 11-23 Chrome.m4a")
+        touch(a, "audio")
+        try SummaryPrompt.renderFile(recording: a.lastPathComponent, engine: "Gemini", promptSource: "p",
+                                     body: "TITLE: Toast POS data\n\nSUMMARY\nHi.", check: .init(cited: 0, matched: 0))
+            .write(to: OutputFile.summaryURL(for: a), atomically: true, encoding: .utf8)
+        let b = dir.url.appendingPathComponent("2026-11-10 09-00 Zoom.m4a")
+        touch(b)
+        let items = Library.scan(dir.url)
+        #expect(items.first { $0.url.lastPathComponent == a.lastPathComponent }?.summaryTitle == "Toast POS data")
+        #expect(items.first { $0.url.lastPathComponent == b.lastPathComponent }?.summaryTitle == nil)
+        try Participants.save([Participant(name: "Rahul")], for: a)
+        #expect(Library.scan(dir.url).first { $0.url.lastPathComponent == a.lastPathComponent }?.participants == ["Rahul"])
+        var filter = LibraryFilter()
+        filter.text = "toast"
+        #expect(filter.apply(items, minimumSeconds: 0).map(\.name) == ["2026-11-13 11-23 Chrome"])
+        filter.text = "rahul"
+        #expect(filter.apply(Library.scan(dir.url), minimumSeconds: 0).map(\.name) == ["2026-11-13 11-23 Chrome"])
+    }
+
     @Test func splitsActionItems() {
         let a = SummaryDocument.actionItem("Review the deck | Owner: Priya | Due: Friday [00:12:10]")
         #expect(a == .init(task: "Review the deck [00:12:10]", owner: "Priya", due: "Friday"))
@@ -315,5 +357,38 @@ struct MonoMixTests {
         let mixed = try read(mixed: true)
         #expect(rms(mixed.l[mid]) > 0.08 && rms(mixed.r[mid]) > 0.08)
         #expect(zip(mixed.l[mid], mixed.r[mid]).allSatisfy { abs($0 - $1) < 1e-5 })
+    }
+}
+
+@Suite struct ParticipantsTests {
+    @Test func readsLinesInEveryForm() {
+        #expect(Participant(line: "- Rahul (Devsur) [00:04:10]") == Participant(name: "Rahul", role: "Devsur", time: 250))
+        #expect(Participant(line: "Priya — design") == Participant(name: "Priya", role: "design"))
+        #expect(Participant(line: "Amit (Not stated) [00:01:00]") == Participant(name: "Amit", time: 60))
+        #expect(Participant(line: "None stated.") == nil)
+        #expect(Participant(line: "You") == nil)
+        #expect(Participants.parse("Rahul\nrahul (dup)\n\nPriya").map(\.name) == ["Rahul", "Priya"])
+    }
+
+    @Test func summaryHasSuggestionsButNotAsASection() {
+        let doc = SummaryDocument.parse("TITLE: Plan\n\nPARTICIPANTS\n- Rahul (Devsur) [00:00:05]\n- None stated.\n\nSUMMARY\nHi.")
+        #expect(doc.participants == [Participant(name: "Rahul", role: "Devsur", time: 5)])
+        #expect(doc.isStructured)
+        #expect(SummaryPrompt.defaultTemplate.contains("PARTICIPANTS"))
+    }
+
+    @Test func userListIsSavedGivenToPromptsAndTrashedWithTheCall() throws {
+        let dir = TempDir()
+        let rec = dir.url.appendingPathComponent("2026-11-13 11-23 Chrome.m4a")
+        FileManager.default.createFile(atPath: rec.path, contents: Data("a".utf8))
+        #expect(Participants.load(for: rec) == nil)
+        try Participants.save([Participant(name: "Rahul", role: "Devsur"), Participant(name: "Priya")], for: rec)
+        #expect(Participants.load(for: rec)?.map(\.line) == ["Rahul (Devsur)", "Priya"])
+        #expect(Library.companions(of: rec).contains(Participants.url(for: rec)))
+        let v = SummaryPrompt.Values(title: "t", date: "d", duration: 60, labelled: true, names: NamesList(), transcript: "x",
+                                     participants: Participants.load(for: rec))
+        #expect(SummaryPrompt.render(template: SummaryPrompt.defaultTemplate, v).contains("People on the call, as given by the user: Rahul (Devsur), Priya."))
+        try Participants.save([], for: rec)
+        #expect(Participants.load(for: rec) == nil)
     }
 }

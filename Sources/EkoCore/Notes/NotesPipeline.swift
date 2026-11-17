@@ -48,7 +48,9 @@ public final class NotesPipeline {
     public var names: NamesList
     public var template: (template: String, source: String)
     var log: (String) -> Void = { RecordingSession.dlog("notes: \($0)") }
-    static let maxParallel = 3
+    /// Parts go one at a time: in parallel they hit the per-minute limits, and when Gemini is overloaded every
+    /// part's failed tries count against the daily quota.
+    static let maxParallel = 1
 
     public init(speech: SpeechEngine, summary: SummaryEngine, settings: NotesSettings = .load(),
                 names: NamesList = .load(), template: (template: String, source: String) = SummaryPrompt.loadTemplate()) {
@@ -93,7 +95,8 @@ public final class NotesPipeline {
         do {
             let values = SummaryPrompt.Values(title: recording.deletingPathExtension().lastPathComponent, date: info.dateText,
                                               duration: duration, labelled: segments.contains { $0.speaker != .unlabelled },
-                                              names: names, transcript: TranscriptText.linesForPrompt(segments))
+                                              names: names, transcript: TranscriptText.linesForPrompt(segments),
+                                              participants: Participants.load(for: recording))
             let answer = try await summary.summarise(prompt: SummaryPrompt.render(template: template.template, values))
             outcome.usage = outcome.usage + answer.usage
             let check = SummaryPrompt.checkTimestamps(answer.text, against: segments)

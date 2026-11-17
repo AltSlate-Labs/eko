@@ -10,7 +10,6 @@ struct RecordingsView: View {
     var body: some View {
         let rows = library.visible(jobs: notes.jobStates)
         VStack(spacing: 0) {
-            RecordingNowBar()
             chips
             if rows.isEmpty {
                 empty.frame(maxHeight: .infinity)
@@ -240,7 +239,7 @@ struct RecordingsView: View {
 
     private func summary(_ rows: [RecordingItem]) -> String {
         let total = rows.compactMap(\.duration).reduce(0, +)
-        let size = ByteCountFormatter.string(fromByteCount: rows.reduce(Int64(0)) { $0 + $1.size }, countStyle: .file)
+        let size = RecordingItem.megabytes(rows.reduce(Int64(0)) { $0 + $1.size })
         let count = rows.count == library.items.count ? "\(rows.count) calls" : "\(rows.count) of \(library.items.count) calls"
         return "\(count) · \(Self.hours(total)) · \(size)"
     }
@@ -259,24 +258,50 @@ struct RecordingRow: View {
     let short: Bool
     var width: CGFloat = 1000
 
+    /// Who was on the call, up to two lines; the full list on hover.
+    private var people: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 6) {
+            Image(systemName: "person.2").font(.system(size: 10, weight: .semibold))
+            Text(item.participants.isEmpty ? "—" : item.participants.joined(separator: ", "))
+                .font(.system(size: 12))
+                .lineLimit(2)
+                .truncationMode(.tail)
+        }
+        .foregroundStyle(item.participants.isEmpty ? Theme.tertiary : Theme.secondary)
+        .frame(width: width >= 1050 ? 190 : 160, alignment: .leading)
+        .help(item.participants.isEmpty ? "No participants known yet" : item.participants.joined(separator: ", "))
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             AppGlyph(symbol: item.glyph)
             VStack(alignment: .leading, spacing: 3) {
-                HStack(alignment: .firstTextBaseline, spacing: 8) {
-                    Text(item.title).font(.system(size: 13.5, weight: .semibold))
-                    Text(item.date, format: .dateTime.hour().minute())
-                        .font(.system(size: 12).monospacedDigit())
+                if let heading = item.summaryTitle {
+                    // Summarised: the call's title, then app and time (the file name is on the call's page).
+                    Text(heading).font(.system(size: 13.5, weight: .semibold))
+                        .lineLimit(1).truncationMode(.tail)
+                        .help(heading)
+                    Text("\(item.title)  ·  \(item.date.formatted(.dateTime.hour().minute()))")
+                        .font(.system(size: 11.5).monospacedDigit())
                         .foregroundStyle(Theme.secondary)
-                }
-                .lineLimit(1)
-                Text(item.fileName)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.tertiary)
+                        .lineLimit(1)
+                } else {
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(item.title).font(.system(size: 13.5, weight: .semibold))
+                        Text(item.date, format: .dateTime.hour().minute())
+                            .font(.system(size: 12).monospacedDigit())
+                            .foregroundStyle(Theme.secondary)
+                    }
                     .lineLimit(1)
-                    .truncationMode(.middle)
+                    Text(item.fileName)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
             }
-            .frame(width: width >= 900 ? 230 : 175, alignment: .leading)
+            .frame(width: width >= 1050 ? 280 : width >= 900 ? 230 : 175, alignment: .leading)
+            if width >= 860 { people }
             RowPlayer(item: item, waveform: width >= 600)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 6)
@@ -284,7 +309,7 @@ struct RecordingRow: View {
                 .font(.system(size: 13, weight: .medium).monospacedDigit())
                 .frame(width: 60, alignment: .trailing)
             if width >= 740 {
-                Text(ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file))
+                Text(RecordingItem.megabytes(item.size))
                     .font(.system(size: 12).monospacedDigit())
                     .foregroundStyle(Theme.secondary)
                     .frame(width: 66, alignment: .trailing)
@@ -353,22 +378,44 @@ struct RowPlayer: View {
     }
 }
 
-/// A slim bar while a call is being recorded (that file is listed once it is saved).
+/// While a call is being recorded: a pill at the top centre of every Library page, with the running time and Stop
+/// (the file itself is listed once it is saved).
 struct RecordingNowBar: View {
     @EnvironmentObject private var recorder: RecorderModel
 
     var body: some View {
-        if recorder.isRecording {
-            HStack(spacing: 10) {
-                Circle().fill(Theme.accent).frame(width: 8, height: 8)
-                Text("Recording").font(.system(size: 12, weight: .semibold))
-                Text(recorder.elapsedText).font(.system(size: 12).monospacedDigit()).foregroundStyle(Theme.secondary)
-                Spacer()
-                Button("Stop") { recorder.stop() }.buttonStyle(.plain).font(.system(size: 12, weight: .medium)).foregroundStyle(Theme.accent)
+        VStack(spacing: 0) { if recorder.isRecording { pill } }
+            .animation(.easeOut(duration: 0.25), value: recorder.isRecording)
+    }
+
+    private var pill: some View {
+            HStack(spacing: 12) {
+                Image(systemName: "record.circle.fill")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(.red)
+                    .symbolEffect(.pulse, options: .repeating)
+                Text("Recording").font(.system(size: 13, weight: .semibold))
+                Text(recorder.elapsedText)
+                    .font(.system(size: 16, weight: .semibold).monospacedDigit())
+                    .contentTransition(.numericText())
+                Button { recorder.stop() } label: {
+                    Label("Stop", systemImage: "stop.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .background(Capsule().fill(Theme.accent))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help("Stop and save the recording")
+                .disabled(recorder.isBusy)
             }
-            .padding(.horizontal, 22)
-            .padding(.vertical, 9)
-            .background(Theme.accent.opacity(0.08))
-        }
+            .padding(.leading, 14).padding(.trailing, 6).padding(.vertical, 6)
+            .background(Capsule().fill(Theme.accent.opacity(0.14)))
+            .overlay(Capsule().strokeBorder(Theme.accent.opacity(0.45)))
+            .frame(maxWidth: .infinity)
+            .padding(.top, 8)
+            .padding(.bottom, 4)
+            .transition(.move(edge: .top).combined(with: .opacity))
     }
 }

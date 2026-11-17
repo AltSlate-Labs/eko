@@ -44,10 +44,11 @@ struct RecordingDetailView: View {
     }
 
     private var subtitle: String {
-        var parts = [item.date.formatted(.dateTime.weekday(.wide).day().month(.wide).year()),
+        var parts = item.summaryTitle == nil ? [] : [item.title]   // the heading is the summary's title: say which app
+        parts += [item.date.formatted(.dateTime.weekday(.wide).day().month(.wide).year()),
                      item.date.formatted(.dateTime.hour().minute())]
         if let d = item.duration { parts.append(Timestamp.short(d)) }
-        parts.append(ByteCountFormatter.string(fromByteCount: item.size, countStyle: .file))
+        parts.append(RecordingItem.megabytes(item.size))
         return parts.joined(separator: "  ·  ")
     }
 
@@ -55,9 +56,12 @@ struct RecordingDetailView: View {
         HStack(alignment: .center, spacing: 14) {
             AppGlyph(symbol: item.glyph, size: 44)
             VStack(alignment: .leading, spacing: 4) {
-                Text(item.title).font(.system(size: 22, weight: .semibold))
+                Text(item.heading).font(.system(size: 22, weight: .semibold))
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
                 Text(subtitle).font(.system(size: 12)).foregroundStyle(Theme.secondary)
                 Text(item.fileName).font(.system(size: 11)).foregroundStyle(Theme.tertiary).textSelection(.enabled)
+                ParticipantsRow(item: item, files: files).padding(.top, 4)
             }
             Spacer()
             if case let .running(text) = job {
@@ -249,12 +253,15 @@ final class RecordingFiles: ObservableObject {
     @Published private(set) var transcriptText: String?
     @Published private(set) var transcriptInfo = ""
     @Published private(set) var summary: SummaryDocument?
-    private var stamps: (Date?, Date?) = (nil, nil)
+    /// The user's list of who was on the call (nil until they edit it; then Gemini's suggestion is not shown).
+    @Published private(set) var participants: [Participant]?
+    private var stamps: (Date?, Date?, Date?) = (nil, nil, nil)
 
-    func load(_ item: RecordingItem) {
-        let t = Self.modified(item.transcriptURL), s = Self.modified(item.summaryURL)
-        guard segments == nil && summary == nil || stamps != (t, s) else { return }
-        stamps = (t, s)
+    func load(_ item: RecordingItem, force: Bool = false) {
+        let t = Self.modified(item.transcriptURL), s = Self.modified(item.summaryURL), p = Self.modified(Participants.url(for: item.url))
+        guard force || segments == nil && summary == nil || stamps != (t, s, p) else { return }
+        stamps = (t, s, p)
+        participants = Participants.load(for: item.url)
         transcriptText = try? String(contentsOf: item.transcriptURL, encoding: .utf8)
         segments = transcriptText.map(TranscriptText.parseFile)
         transcriptInfo = transcriptText.map(Self.info) ?? ""
@@ -314,6 +321,116 @@ private struct DetailTabBar: View {
         case .transcript: return "quote.opening"
         case .summary: return "text.alignleft"
         case .chat: return "bubble.left.and.bubble.right"
+        }
+    }
+}
+
+/// Who was on the call: the user's list if they made one, else the names Gemini heard in the call. "Edit" turns it
+/// into a field with one person per line; saving an empty list goes back to the suggestions.
+private struct ParticipantsRow: View {
+    let item: RecordingItem
+    @ObservedObject var files: RecordingFiles
+    @EnvironmentObject private var player: Player
+    @State private var editing = false
+    @State private var draft = ""
+    @State private var error: String?
+    @FocusState private var focused: Bool
+
+    private var suggested: [Participant] { files.summary?.participants ?? [] }
+    private var people: [Participant] { files.participants ?? suggested }
+
+    var body: some View {
+        if editing { editor } else { row }
+    }
+
+    private var row: some View {
+        HStack(alignment: .center, spacing: 6) {
+            Image(systemName: "person.2").font(.system(size: 11, weight: .semibold)).foregroundStyle(Theme.secondary)
+                .help("Participants")
+            if people.isEmpty {
+                Text(item.hasSummary ? "No names heard in the call" : "Participants not known yet")
+                    .font(.system(size: 12)).foregroundStyle(Theme.tertiary)
+            } else {
+                ForEach(people.prefix(6), id: \.self) { person in chip(person) }
+                if people.count > 6 {
+                    Text("+\(people.count - 6) more").font(.system(size: 11)).foregroundStyle(Theme.secondary)
+                        .help(people.dropFirst(6).map(\.line).joined(separator: ", "))
+                }
+                if files.participants == nil {
+                    Text("from the call").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+                        .help("Names Gemini heard in the call. Edit to correct them.")
+                }
+            }
+            Button(people.isEmpty ? "Add" : "Edit") { start() }
+                .buttonStyle(.plain)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(Theme.accent)
+                .padding(.leading, 4)
+        }
+        .lineLimit(1)
+    }
+
+    private func chip(_ person: Participant) -> some View {
+        let label = HStack(spacing: 4) {
+            Text(person.name).font(.system(size: 12, weight: .medium))
+            if let role = person.role { Text(role).font(.system(size: 11)).foregroundStyle(Theme.secondary) }
+        }
+        .padding(.horizontal, 8).padding(.vertical, 2.5)
+        .background(Capsule().fill(Theme.card))
+        .overlay(Capsule().strokeBorder(Theme.hairline))
+        return Group {
+            if let t = person.time {
+                Button { player.seek(to: t, play: true) } label: { label }
+                    .buttonStyle(.plain)
+                    .help("\(person.name) is named at \(Timestamp.short(t)): click to play from there")
+            } else {
+                label
+            }
+        }
+    }
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("One person per line, with a role in brackets if you like: Rahul (Devsur)")
+                .font(.system(size: 11)).foregroundStyle(Theme.secondary)
+            TextField("Rahul (Devsur)", text: $draft, axis: .vertical)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13))
+                .lineLimit(2...8)
+                .focused($focused)
+                .padding(.horizontal, 10).padding(.vertical, 6)
+                .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Theme.card))
+                .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Theme.hairline))
+                .frame(maxWidth: 420)
+            HStack(spacing: 10) {
+                Button("Save") { save() }.keyboardShortcut(.return, modifiers: .command)
+                Button("Cancel") { editing = false }.keyboardShortcut(.cancelAction)
+                if files.participants != nil, !suggested.isEmpty {
+                    Button("Use names from the call") { draft = ""; save() }
+                        .buttonStyle(.plain).foregroundStyle(Theme.accent)
+                }
+                if let error { Text(error).foregroundStyle(.red) }
+            }
+            .font(.system(size: 12))
+            .controlSize(.small)
+            Text("Used by the next Summarise Again and by Chat.").font(.system(size: 11)).foregroundStyle(Theme.tertiary)
+        }
+    }
+
+    private func start() {
+        draft = people.map(\.line).joined(separator: "\n")
+        error = nil
+        editing = true
+        focused = true
+    }
+
+    private func save() {
+        do {
+            try Participants.save(Participants.parse(draft), for: item.url)
+            files.load(item, force: true)
+            editing = false
+        } catch {
+            self.error = error.localizedDescription
         }
     }
 }

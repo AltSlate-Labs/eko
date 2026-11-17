@@ -83,7 +83,6 @@ private struct SidebarItem: View {
 struct LibraryRootView: View {
     @EnvironmentObject private var library: LibraryModel
     @EnvironmentObject private var notes: NotesModel
-
     var body: some View {
         NavigationSplitView {
             VStack(alignment: .leading, spacing: 2) {
@@ -99,7 +98,8 @@ struct LibraryRootView: View {
             .background(Theme.sidebar.ignoresSafeArea())
             .navigationSplitViewColumnWidth(min: 170, ideal: 190, max: 240)
         } detail: {
-            Group {
+            VStack(spacing: 0) {
+            RecordingNowBar()   // on every page while a call is being recorded
             switch library.section {
             case .recordings:
                 if let item = library.opened {
