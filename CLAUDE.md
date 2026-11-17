@@ -23,3 +23,10 @@ Native macOS menu-bar call recorder (Swift, SwiftPM, no dependencies). See READM
 
 - Tests: `swift test`. Build app: `./scripts/bundle.sh`. CLI: `swift build -c release`.
 - Releasing: see "Releasing (maintainers)" in README.md.
+- Every new build is a new app to the Keychain (self-signed): the first time it reads the Gemini key, macOS asks
+  the user. Don't install build after build on the user's Mac; batch changes, install once, and warn them.
+- Checking the Library window without clicks: launch with
+  `open -n /Applications/Eko.app --env EKO_UI_CHECK_DIR=<dir> --args -outputDirectory <test folder>`, then
+  `open "eko://library"`, `open "eko://ui/open?name=<recording>&tab=summary"`, `open "eko://ui/snapshot?file=x.png"`
+  (see Sources/EkoApp/Library/UICheck.swift). Use copies or fake files as the test folder, never the real one.
+  Relaunch normally afterwards.

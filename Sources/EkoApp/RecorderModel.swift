@@ -220,6 +220,7 @@ final class RecorderModel: ObservableObject {
             lastRecording = url
             statusLine = String(format: "Saved %@ (%@)", url.lastPathComponent, Self.format(duration: duration))
             NSSound(named: "Glass")?.play()
+            NotesModel.current?.recordingSaved(url, duration: duration)   // queued on disk; runs now or after relaunch
             if quitAfterStop { NSApp.terminate(nil) }
         case let .failed(error):
             ticker?.invalidate()

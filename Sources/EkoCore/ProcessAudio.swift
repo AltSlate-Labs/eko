@@ -80,10 +80,12 @@ public enum KnownApps {
         return nil
     }
 
-    /// Picks the best app name from a set of names seen during a recording.
+    /// Picks the best app name from a set of names seen during a recording: the app heard most. A meeting app
+    /// wins over a browser only when it was heard nearly as much (at least half as often), so a Slack ping during
+    /// a Google Meet call in Chrome does not name the recording "Slack".
     public static func preferredName(from seen: [String: Int]) -> String? {
-        guard !seen.isEmpty else { return nil }
-        for candidate in meetingPriority where seen[candidate] != nil { return candidate }
-        return seen.max { a, b in a.value < b.value }?.key
+        guard let top = seen.max(by: { a, b in a.value != b.value ? a.value < b.value : a.key > b.key }) else { return nil }
+        for candidate in meetingPriority { if let n = seen[candidate], n * 2 >= top.value { return candidate } }
+        return top.key
     }
 }
