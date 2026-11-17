@@ -10,6 +10,7 @@ func usage() -> Never {
            eko --devices      show default input/output devices
            eko --apps         show processes currently playing audio
            eko --watch        print call start/end detections (mic use by call apps)
+           eko notes …        transcript + summary of a recording (eko notes --help)
 
     Stops on Ctrl-C (or after --seconds). Output: DIR/yyyy-MM-dd HH-mm <App>.m4a
     Default DIR: ~/Documents/CallRecordings
@@ -18,6 +19,13 @@ func usage() -> Never {
 }
 
 var args = Array(CommandLine.arguments.dropFirst())
+if args.first == "notes" {
+    Task {
+        let status = await NotesCommand.run(Array(args.dropFirst()))
+        exit(status)
+    }
+    RunLoop.main.run()
+}
 var options = RecordingOptions()
 var maxSeconds: Double?
 

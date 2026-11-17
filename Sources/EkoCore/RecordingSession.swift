@@ -304,9 +304,15 @@ public final class RecordingSession {
         let l = currentLevels
         Self.dlog(String(format: "levels: mic peak %.3f, system peak %.3f, mixed %.1fs, system frames %.1fs", l.mic, l.system, Double(l.framesCaptured) / (mixBus?.sampleRate ?? 48_000), Double(l.systemFrames) / (mixBus?.sampleRate ?? 48_000)))
         let me = pid_t(ProcessInfo.processInfo.processIdentifier)
-        for process in AudioProcess.playing(excluding: [me]) where process.isKnownCallApp {
-            appsSeen[process.displayName, default: 0] += 1
+        // Every 2 s: an app holding the microphone is almost certainly the call (weight 3); an app only playing
+        // sound may just be a notification ping (weight 1).
+        let processes = ((try? AudioProcess.all()) ?? []).filter { $0.pid != me && $0.isKnownCallApp }
+        var weights: [String: Int] = [:]
+        for p in processes {
+            let w = p.isRunningInput ? 3 : (p.isRunningOutput ? 1 : 0)
+            weights[p.displayName] = max(weights[p.displayName] ?? 0, w)
         }
+        for (name, w) in weights where w > 0 { appsSeen[name, default: 0] += w }
     }
 
     private func scheduleSilenceCheck() {

@@ -71,7 +71,11 @@ final class Updater: ObservableObject {
         return URLSession(configuration: config)
     }()
 
+    /// The single instance owned by the App scene (the Library's Settings page uses it).
+    static weak var current: Updater?
+
     init() {
+        Self.current = self
         let delay: TimeInterval = Self.feedOverride != nil ? 2 : 20
         timer = Timer.scheduledTimer(withTimeInterval: 3600, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.checkIfDue() }
