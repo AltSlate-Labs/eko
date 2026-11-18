@@ -283,11 +283,11 @@ final class NotesModel: ObservableObject {
         let alert = NSAlert()
         alert.messageText = "Get transcripts and summaries of your calls"
         alert.informativeText = (message.map { "\($0)\n\n" } ?? "") + """
-        Eko uses Google Gemini. You need a free API key:
-        1. Click Get a Key (opens aistudio.google.com) and sign in with your Google account.
-        2. Click Create API key, then copy it.
-        3. Paste it below and click Save.
-        Eko sends each call's audio to Gemini to transcribe it.
+        Optional: recording works without this. Eko uses Google Gemini with your own free API key:
+        1. Click Get a Key (opens aistudio.google.com) and sign in with a Google account.
+        2. Click Create API key, then copy the key.
+        3. Paste it below and click Save. If macOS asks for Keychain access, click Always Allow.
+        Each call's audio is sent to Gemini. Free keys allow about 3 hour-long calls a day.
         """
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 320, height: 24))
         field.placeholderString = "Paste your Gemini API key"

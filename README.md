@@ -10,7 +10,10 @@ earphones, AirPods), on the right.
   1 MB per minute; left = you, right = the other side) plus a small `.json` sidecar with times,
   the call app heard and the channel layout (`"channels": "split-v1"`). Both are readable only
   by you
-- Native Swift, no third-party dependencies, no Xcode needed, ~1 MB download, no cloud service
+- Optional: transcripts, summaries (title, decisions, action items, participants) and questions
+  about a call, using your own Google Gemini API key. Recording works fully without one
+- Library window: every call with a player, transcript, summary and chat
+- Native Swift, no third-party dependencies, no Xcode needed, ~1 MB download
 
 ## Quick start
 
@@ -23,7 +26,9 @@ earphones, AirPods), on the right.
 2. Record: click the waveform icon in the menu bar → **Start Recording** (or press **⌃⌥⌘R**),
    and approve the Microphone and System Audio prompts the first time
    ([First-run setup](#first-run-setup)).
-3. Stop: **Stop Recording** (or ⌃⌥⌘R again). **Show Last Recording** opens the file.
+3. Stop: **Stop Recording** (or ⌃⌥⌘R again). **Open Library…** in the menu lists your calls.
+4. Optional, for transcripts and summaries: add a free Gemini API key
+   ([Transcripts and summaries](#transcripts-and-summaries-optional)).
 
 ## Requirements
 
@@ -94,6 +99,39 @@ Prefer to do it by hand? The same steps are `./scripts/make-signing-cert.sh`,
 
 Both permissions are asked only once thanks to the local certificate.
 
+## Transcripts and summaries (optional)
+
+Eko can send a call to Google Gemini for a transcript (Hinglish written in Roman script), a
+summary and answers to questions about it. Everything else works without this.
+
+**Get a Gemini API key (free, about 2 minutes)**
+
+1. Open https://aistudio.google.com/api-keys and sign in with a Google account.
+2. Click **Create API key** (pick or create any project if asked) and copy the key.
+
+**Add it to Eko**
+
+1. Menu-bar icon → **Settings…** → *Transcripts and summaries*, paste the key and click **Save**
+   (or menu → **Transcripts → Set Gemini Key…**). Eko checks it with Google and stores it in the
+   macOS Keychain, nowhere else.
+2. The first time Eko uses the key, macOS asks for Keychain access: click **Always Allow**.
+3. New calls are then transcribed and summarised automatically after they end (turn this off with
+   *Transcribe every call automatically*). For older calls: Library → open the call →
+   **Transcribe**.
+
+**Good to know**
+
+- **Free limit:** about 20 Gemini requests a day, resetting at midnight Pacific time (about 1:30 PM
+  in India). An hour-long call uses about 5, so roughly 3 hour-long calls a day; chat questions
+  use 1 each. Calls over the limit wait and continue automatically after the reset.
+- **No limit:** enable billing for the key's project in AI Studio. An hour-long call then costs
+  about US$0.25–0.35, and calls are done right after they end.
+- **Privacy:** the call's audio and transcript go to Google. On the free tier Google may use them
+  to improve its products; with billing enabled it does not. Results are saved next to the
+  recording (`… -transcript.txt`, `-summary.txt`), readable only by you.
+- **No key?** Recording, the Library and the player work as before. Eko asks for a key once,
+  after your first call; calls recorded meanwhile are transcribed once a key is added.
+
 ## Everyday use
 
 - **Start / stop**: menu-bar icon, hotkey ⌃⌥⌘R, or `open eko://start` / `open eko://stop`
@@ -113,6 +151,8 @@ Both permissions are asked only once thanks to the local certificate.
   audio as mono* to hear both in both ears, or make a blended copy:
   `afconvert --mix -c 1 -f WAVE -d LEI16 call.m4a /tmp/mix.wav && afconvert -f m4af -d aac /tmp/mix.wav "call (mixed).m4a"`.
   Recordings made before 0.1.2 have both sides blended into both channels.
+- **Library**: menu → **Open Library…** (or click Eko in the Dock). Search, play, and open a call
+  for its transcript, summary (click a time to play from there), participants and chat.
 - **Icon**: heavy waveform when idle; solid red dot with elapsed time while recording.
 - **Updates**: *Check for Updates…* in the menu, or the daily check; see [Update](#update).
 - **Quit** while recording stops and saves first.
@@ -171,6 +211,10 @@ deletes the release signing certificate, so export a backup first (see
   `xattr -dr com.apple.quarantine /Applications/Eko.app`.
 - **Echo of the remote side.** With speakers plus the built-in mic the remote voice is also
   picked up by the mic. Use headphones.
+- **Transcript waiting: "free daily limit is used up".** It continues by itself after the reset
+  (time shown in Settings). Enable billing on the key for no limit.
+- **"Eko couldn't read the Gemini key from the Keychain".** The Keychain prompt was denied. Click
+  **Retry** in Settings and choose **Always Allow**.
 - **App was force-killed mid-recording.** The `.m4a` will not be finalised. Record with
   `eko --wav` on the command line if crash safety matters more than file size.
 
@@ -260,8 +304,11 @@ Two Core Audio quirks worth knowing if you touch the capture code: setting `name
 ```
 Sources/EkoCore   MicCapture, SystemAudioCapture (tap), MixBus, AudioFileWriter,
                       RecordingSession, CallDetector, process/app detection
+Sources/EkoCore/Notes     Gemini client, transcription and summary pipeline, queue, Keychain
+Sources/EkoCore/Library   recordings list, summary and transcript parsing, chat, participants
 Sources/eko       command-line recorder
 Sources/EkoApp    SwiftUI menu-bar app, nudge panel, Carbon global hotkey, self-updater
+Sources/EkoApp/Library    Library window: list, player, transcript, summary, chat, settings
 Tests/EkoCoreTests
 scripts/get-eko.sh        one-line installer: latest release DMG → checksum → /Applications
 scripts/install.sh        build + sign + copy to /Applications + launch (from source)
@@ -279,8 +326,10 @@ PLAN.md               design notes and the options that were considered
 
 Recordings and settings stay on your Mac (unless the recordings folder syncs to iCloud; the menu
 warns when it does). New recordings and sidecars are created readable only by you, and a
-recordings folder Eko creates is private to you. The only network access is the daily update
-check (a request to api.github.com for the latest release, then the DMG download when you choose
-to install); switch it off with *Check for Updates Daily* in the menu. Recording calls may
+recordings folder Eko creates is private to you. Network access: the daily update check (a
+request to api.github.com for the latest release, then the DMG download when you choose to
+install; switch it off with *Check for Updates Daily* in the menu), and, only if you add a Gemini
+key, the calls sent to Google Gemini (generativelanguage.googleapis.com) for transcripts,
+summaries and chat. Recording calls may
 require the consent of all participants depending on where you and they are; the app does not
 announce itself. That is on you.
