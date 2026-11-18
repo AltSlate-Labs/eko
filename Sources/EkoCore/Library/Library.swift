@@ -16,6 +16,10 @@ public struct RecordingItem: Identifiable, Hashable {
     public var hasTranscript: Bool
     public var hasSummary: Bool
     public var hasChat: Bool
+    /// The call's title from its summary, when the summary has one.
+    public var summaryTitle: String? = nil
+    /// Who was on the call: the user's list, else the names Gemini heard (from the summary).
+    public var participants: [String] = []
 
     public var id: String { url.path }
     public var length: TimeInterval { duration ?? -1 }   // sort key: unknown lengths first in ascending order
@@ -46,14 +50,19 @@ public enum Library {
             guard values?.isRegularFile ?? true else { return nil }
             let base = url.deletingPathExtension().lastPathComponent
             let info = RecordingInfo.read(url)
+            let hasSummary = names.contains(base + "-summary.txt")
+            let summary = hasSummary ? SummaryDocument.load(OutputFile.summaryURL(for: url)) : nil
+            let people = names.contains(base + "-participants.txt") ? Participants.load(for: url) : nil
             if hideUnfinished, !info.hasSidecar, isUnfinishedName(base) { return nil }
             return RecordingItem(
                 url: url, name: base,
                 date: info.start ?? dateFromName(base) ?? values?.creationDate ?? .distantPast,
                 duration: info.duration, size: Int64(values?.fileSize ?? 0), apps: info.apps, split: info.split,
                 hasTranscript: names.contains(base + "-transcript.txt"),
-                hasSummary: names.contains(base + "-summary.txt"),
-                hasChat: names.contains(base + "-chat.json"))
+                hasSummary: hasSummary,
+                hasChat: names.contains(base + "-chat.json"),
+                summaryTitle: summary?.title,
+                participants: (people ?? summary?.participants ?? []).map(\.name))
         }
     }
 
@@ -78,7 +87,8 @@ public enum Library {
     /// The recording and the files Eko keeps next to it, those that exist; the recording first.
     public static func companions(of recording: URL) -> [URL] {
         [recording, recording.deletingPathExtension().appendingPathExtension("json"),
-         OutputFile.transcriptURL(for: recording), OutputFile.summaryURL(for: recording), OutputFile.chatURL(for: recording)]
+         OutputFile.transcriptURL(for: recording), OutputFile.summaryURL(for: recording), OutputFile.chatURL(for: recording),
+         Participants.url(for: recording)]
             .filter { FileManager.default.fileExists(atPath: $0.path) }
     }
 
@@ -139,7 +149,7 @@ public struct LibraryFilter: Equatable, Codable {
             if hideShort, let d = item.duration, d < minimumSeconds { return false }
             if !matches(status, item, jobs[item.id]) { return false }
             if !words.isEmpty {
-                let haystack = ([item.name] + item.apps).joined(separator: " ") + " " + (transcripts[item.id] ?? "")
+                let haystack = ([item.name, item.summaryTitle ?? ""] + item.apps + item.participants).joined(separator: " ") + " " + (transcripts[item.id] ?? "")
                 for w in words where haystack.range(of: w, options: [.caseInsensitive, .diacriticInsensitive]) == nil {
                     return false
                 }

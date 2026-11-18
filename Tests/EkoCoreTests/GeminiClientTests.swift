@@ -92,16 +92,18 @@ final class Box<T> {
     }
 
     @Test func retriesServerErrorsThenSucceeds() async throws {
-        StubProtocol.reset([.init(status: 503, body: "{}"), .init(status: 500, body: "{}"), ok("done")])
+        StubProtocol.reset([.init(status: 503, body: "{}"), ok("done")])
         let sleeps = Box<[TimeInterval]>([])
         let response = try await makeClient(sleeps: sleeps).generate(.init(model: "m", text: "t"))
         #expect(response.text == "done")
-        #expect(sleeps.value == [5, 15])
+        #expect(sleeps.value == [20])
     }
 
+    /// Failed tries count against the daily quota: one retry, then the queue waits.
     @Test func gives_up_on_persistent_server_errors() async {
         StubProtocol.reset(Array(repeating: .init(status: 503, body: "{}"), count: 5))
         await #expect(throws: GeminiError.server(503)) { try await makeClient().generate(.init(model: "m", text: "t")) }
+        #expect(StubProtocol.requests.count == 2)
     }
 
     @Test func perMinuteRateLimitHonoursRetryDelay() async throws {

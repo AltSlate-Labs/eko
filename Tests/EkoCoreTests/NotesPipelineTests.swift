@@ -92,11 +92,18 @@ struct AudioPrepTests {
 /// Returns canned lines per side, recording what it was asked.
 final class FakeSpeech: SpeechEngine {
     var info: EngineInfo { EngineInfo(name: "Fake", model: "f1", location: "test") }
-    var calls: [AudioPart] = []
+    private let lock = NSLock()
+    private var recorded: [AudioPart] = []
+    /// Parts are transcribed in parallel, so the record is guarded.
+    var calls: [AudioPart] { lock.withLock { recorded } }
     var failFirstWithMaxTokens = false
     func transcribe(_ part: AudioPart, names: NamesList) async throws -> SpeechResult {
-        calls.append(part)
-        if failFirstWithMaxTokens { failFirstWithMaxTokens = false; throw GeminiError.maxTokens }
+        let fail = lock.withLock {
+            recorded.append(part)
+            defer { failFirstWithMaxTokens = false }
+            return failFirstWithMaxTokens
+        }
+        if fail { throw GeminiError.maxTokens }
         let text = part.speaker == .you ? "[00:00:01] Hello from me\n[00:00:04] Theek hai" : "[00:02] Hi from them"
         return SpeechResult(segments: TranscriptText.parseModelOutput(text, speaker: part.speaker).segments,
                             usage: Usage(inputTokens: 10, outputTokens: 2), nonLatin: 0)
@@ -191,7 +198,8 @@ struct NotesQueueTests {
 
         #expect(q.retryLater(rec.path, error: "offline", now: t0))
         #expect(q.nextDue(now: t0) == nil)
-        #expect(q.nextDue(now: t0.addingTimeInterval(61)) != nil)
+        #expect(q.nextDue(now: t0.addingTimeInterval(899)) == nil)
+        #expect(q.nextDue(now: t0.addingTimeInterval(901)) != nil)
 
         q.pause(until: t0.addingTimeInterval(3600), error: "quota")
         #expect(q.nextDue(now: t0.addingTimeInterval(100)) == nil)
@@ -200,7 +208,10 @@ struct NotesQueueTests {
         #expect(reloaded.jobs.first?.attempts == 1)
         #expect(reloaded.nextDue(now: t0.addingTimeInterval(3601)) != nil)
 
-        for _ in 0..<3 { reloaded.retryLater(rec.path, error: "offline", now: t0) }
+        reloaded.retryLater(rec.path, error: "offline", now: t0)   // 30 min
+        reloaded.retryLater(rec.path, error: "offline", now: t0)   // after the quota reset
+        #expect(reloaded.jobs.first?.nextTryAt == GeminiClient.nextQuotaReset(after: t0).addingTimeInterval(120))
+        for _ in 0..<2 { reloaded.retryLater(rec.path, error: "offline", now: t0) }
         #expect(!reloaded.retryLater(rec.path, error: "offline", now: t0))
         #expect(reloaded.failedJobs.count == 1)
         reloaded.retryAll(now: t0)

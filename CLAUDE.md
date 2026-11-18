@@ -10,6 +10,9 @@ Native macOS menu-bar call recorder (Swift, SwiftPM, no dependencies). See READM
   local "Eko Dev" certificate; macOS may show a keychain prompt the user must approve.
 - After installing, tell the user to click the menu-bar waveform → Start Recording and approve
   the Microphone and System Audio Recording prompts. Claude cannot approve those.
+- Transcripts and summaries are optional and need the user's own Gemini API key: point them to
+  README → "Transcripts and summaries". They paste it in Eko's Settings themselves; never ask
+  for the key in chat or write it to a file.
 - Test recording: `open eko://start`, then `open eko://stop`; files land in
   ~/Documents/CallRecordings (or the folder chosen in the menu).
 

@@ -35,7 +35,8 @@ struct SummaryView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 30) {
                 if document.isStructured {
-                    ForEach(Array(document.sections.enumerated()), id: \.offset) { _, section in
+                    // Participants are shown (and edited) in the call's header.
+                    ForEach(Array(document.sections.filter { $0.title != "Participants" }.enumerated()), id: \.offset) { _, section in
                         SummarySection(section: section)
                     }
                 } else {

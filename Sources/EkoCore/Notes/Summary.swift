@@ -12,6 +12,11 @@ public enum SummaryPrompt {
 
     Write the notes in exactly this format, as plain text without Markdown:
 
+    TITLE: <what the call was about, in at most 8 words; no date, app name or "Call with">
+
+    PARTICIPANTS
+    - <name> (<role or team, only if said in the call>) [hh:mm:ss]
+
     SUMMARY
     Two to four sentences: what the call was about and where it ended up.
 
@@ -30,6 +35,9 @@ public enum SummaryPrompt {
     Rules:
     - End every bullet with the timestamp of the transcript line that supports it.
     - Do not invent owners, dates, names, numbers or commitments.
+    - Participants: only people taking part in the call, known from being addressed by name, introducing
+      themselves or answering to their name, with the time where that happens. Leave out You and people who
+      are only talked about. If the speakers line lists the people on the call, use those names.
     - If a section has nothing, write "None stated."
     - Write in English, including dates (e.g. "the 17th", not "17 tareekh"), even where the call is in Hindi.
       Keep names, and Hindi terms with no good English equivalent, as they were spoken, in Roman script,
@@ -47,7 +55,11 @@ public enum SummaryPrompt {
         public var labelled: Bool
         public var names: NamesList
         public var transcript: String
-        public init(title: String, date: String, duration: TimeInterval, labelled: Bool, names: NamesList, transcript: String) {
+        /// The user's list of who was on the call, if they made one.
+        public var participants: [Participant]?
+        public init(title: String, date: String, duration: TimeInterval, labelled: Bool, names: NamesList, transcript: String,
+                    participants: [Participant]? = nil) {
+            self.participants = participants
             self.title = title
             self.date = date
             self.duration = duration
@@ -57,10 +69,11 @@ public enum SummaryPrompt {
         }
     }
 
-    public static func speakersLine(labelled: Bool, me: String?) -> String {
-        guard labelled else { return "Speakers are not labelled." }
-        if let me { return "You = \(me), who recorded the call. Others = everyone else (not told apart)." }
-        return "You = the person who recorded the call. Others = everyone else (not told apart)."
+    public static func speakersLine(labelled: Bool, me: String?, participants: [Participant]? = nil) -> String {
+        let people = Participants.promptLine(participants)
+        guard labelled else { return "Speakers are not labelled." + people }
+        if let me { return "You = \(me), who recorded the call. Others = everyone else (not told apart)." + people }
+        return "You = the person who recorded the call. Others = everyone else (not told apart)." + people
     }
 
     public static func render(template: String, _ v: Values) -> String {
@@ -70,7 +83,7 @@ public enum SummaryPrompt {
             .replacingOccurrences(of: "{{title}}", with: v.title)
             .replacingOccurrences(of: "{{date}}", with: v.date)
             .replacingOccurrences(of: "{{duration}}", with: TranscriptText.clock(v.duration))
-            .replacingOccurrences(of: "{{speakers}}", with: speakersLine(labelled: v.labelled, me: v.names.me))
+            .replacingOccurrences(of: "{{speakers}}", with: speakersLine(labelled: v.labelled, me: v.names.me, participants: v.participants))
             .replacingOccurrences(of: "{{names}}", with: names)
             .replacingOccurrences(of: "{{transcript}}", with: v.transcript)
     }

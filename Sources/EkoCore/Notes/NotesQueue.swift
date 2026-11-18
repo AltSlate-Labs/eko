@@ -23,7 +23,9 @@ public final class NotesQueue {
     public private(set) var jobs: [NotesJob] = []
     /// Set when the daily quota is used up: nothing runs before this time.
     public private(set) var pausedUntil: Date?
-    public static let retryDelays: [TimeInterval] = [60, 300, 1800, 7200]
+    /// After a failed run: 15 min, 30 min, then wait for the next quota reset (nil) and try twice more, then stop
+    /// until the user's Retry. At most three runs a day, so an outage cannot use up the daily quota.
+    public static let retryDelays: [TimeInterval?] = [900, 1800, nil, 900, 1800]
     private let url: URL
 
     private struct Stored: Codable {
@@ -120,7 +122,8 @@ public final class NotesQueue {
         guard let i = jobs.firstIndex(where: { $0.path == path }) else { return false }
         jobs[i].lastError = error
         if jobs[i].attempts < Self.retryDelays.count {
-            jobs[i].nextTryAt = now.addingTimeInterval(Self.retryDelays[jobs[i].attempts])
+            jobs[i].nextTryAt = Self.retryDelays[jobs[i].attempts].map { now.addingTimeInterval($0) }
+                ?? GeminiClient.nextQuotaReset(after: now).addingTimeInterval(120)
             jobs[i].attempts += 1
             save()
             return true

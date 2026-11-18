@@ -16,6 +16,8 @@ public struct SummaryDocument: Equatable {
         public var due: String?
     }
 
+    /// A short title for the call, from the summary's `TITLE:` line (nil for older summaries and custom formats).
+    public var title: String?
     /// "Gemini gemini-3.6-flash", from the first header line.
     public var producer: String?
     public var sections: [Section] = []
@@ -24,7 +26,7 @@ public struct SummaryDocument: Equatable {
     /// The summary text without Eko's header and footer.
     public var body = ""
 
-    public static let knownHeadings: Set<String> = ["SUMMARY", "DECISIONS", "ACTION ITEMS", "OPEN QUESTIONS", "FOLLOW-UPS"]
+    public static let knownHeadings: Set<String> = ["PARTICIPANTS", "SUMMARY", "DECISIONS", "ACTION ITEMS", "OPEN QUESTIONS", "FOLLOW-UPS"]
 
     public static func parse(_ text: String) -> SummaryDocument {
         var doc = SummaryDocument()
@@ -41,6 +43,11 @@ public struct SummaryDocument: Equatable {
             let footer = lines[(last + 1)...].first { $0.hasPrefix("Checks: ") }
             doc.check = footer.map { String($0.dropFirst("Checks: ".count)) }
             lines.removeSubrange(last...)
+        }
+        if let i = lines.firstIndex(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }),
+           let title = Self.titleLine(lines[i].trimmingCharacters(in: .whitespaces)) {
+            doc.title = title   // shown as the heading, not as part of the text
+            lines.remove(at: i)
         }
         doc.body = lines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
 
@@ -73,6 +80,13 @@ public struct SummaryDocument: Equatable {
         return doc
     }
 
+    /// Gemini's suggestion of who was on the call (the PARTICIPANTS section).
+    public var participants: [Participant] {
+        let items = sections.first { $0.title == "Participants" }?.items ?? []
+        var seen = Set<String>()
+        return items.compactMap(Participant.init(line:)).filter { seen.insert($0.name.lowercased()).inserted }
+    }
+
     /// True when the summary has Eko's sections (otherwise it is shown as plain text).
     public var isStructured: Bool { sections.contains { Self.knownHeadings.contains($0.title.uppercased()) } }
 
@@ -94,6 +108,24 @@ public struct SummaryDocument: Equatable {
         return item
     }
 
+    /// "TITLE: Pricing for the v1 launch" (also "**Title:** …") → the title, tidied and capped; nil otherwise.
+    static func titleLine(_ line: String) -> String? {
+        let bare = line.trimmingCharacters(in: CharacterSet(charactersIn: "#* "))
+        guard bare.uppercased().hasPrefix("TITLE") else { return nil }
+        var rest = bare.dropFirst(5).drop { $0 == "*" || $0 == " " }
+        guard rest.first == ":" else { return nil }
+        rest = rest.dropFirst()
+        var t = String(rest).trimmingCharacters(in: CharacterSet(charactersIn: "*\"“”'`. ").union(.whitespaces))
+        t = t.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+        if t.count > 90 { t = String(t.prefix(90)).trimmingCharacters(in: .whitespaces) + "…" }
+        return t.isEmpty || t.lowercased() == "none stated" ? nil : t
+    }
+
+    /// A summary file, read for the Library list (title and participants).
+    public static func load(_ url: URL) -> SummaryDocument? {
+        (try? String(contentsOf: url, encoding: .utf8)).map(parse)
+    }
+
     private static func clean(_ s: Substring) -> String? {
         let v = s.trimmingCharacters(in: .whitespaces)
         return v.isEmpty || v.lowercased() == "not stated" ? nil : v
@@ -101,8 +133,9 @@ public struct SummaryDocument: Equatable {
 
     /// For pasting into Slack, Notion or email.
     public var markdown: String {
-        guard isStructured else { return body }
-        return sections.map { s in
+        let heading = title.map { "**\($0)**\n\n" } ?? ""
+        guard isStructured else { return heading + body }
+        return heading + sections.filter { $0.title != "Participants" || !participants.isEmpty }.map { s in
             let title = s.title.isEmpty ? "" : "**\(s.title)**\n"
             return title + (s.isList ? s.items.map { "- \($0)" } : s.items).joined(separator: "\n")
         }.joined(separator: "\n\n")

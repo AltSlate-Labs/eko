@@ -107,8 +107,12 @@ public final class GeminiClient {
     var sleep: (TimeInterval) async throws -> Void = { try await Task.sleep(nanoseconds: UInt64($0 * 1_000_000_000)) }
     var now: () -> Date = Date.init
     var log: (String) -> Void = { RecordingSession.dlog("notes: \($0)") }
-    static let rateDelays: [TimeInterval] = [10, 30, 60, 120]
-    static let serverDelays: [TimeInterval] = [5, 15, 45, 120]
+    /// Failed requests (429, 503) count against the free daily quota (~20 a day), so retry little here; the queue
+    /// waits 15–30 minutes before the next try (NotesQueue.retryDelays).
+    static let rateDelays: [TimeInterval] = [30, 60]
+    static let serverDelays: [TimeInterval] = [20]
+    /// A request that never reached Google costs no quota.
+    static let networkDelays: [TimeInterval] = [5, 15, 45, 120]
 
     public init(key: String, session: URLSession? = nil) {
         self.key = key
@@ -153,7 +157,7 @@ public final class GeminiClient {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
 
-        var rateTries = 0, serverTries = 0
+        var rateTries = 0, serverTries = 0, networkTries = 0
         while true {
             let started = now()
             let data: Data, status: Int
@@ -163,10 +167,10 @@ public final class GeminiClient {
                 throw error
             } catch {
                 if Task.isCancelled { throw CancellationError() }
-                guard serverTries < Self.serverDelays.count else { throw GeminiError.network(error.localizedDescription) }
-                log("network error (\(error.localizedDescription)); retry in \(Int(Self.serverDelays[serverTries])) s")
-                try await sleep(Self.serverDelays[serverTries])
-                serverTries += 1
+                guard networkTries < Self.networkDelays.count else { throw GeminiError.network(error.localizedDescription) }
+                log("network error (\(error.localizedDescription)); retry in \(Int(Self.networkDelays[networkTries])) s")
+                try await sleep(Self.networkDelays[networkTries])
+                networkTries += 1
                 continue
             }
             log(String(format: "%@ HTTP %d in %.1f s (%d KB sent)", r.model, status, now().timeIntervalSince(started), (request.httpBody?.count ?? 0) / 1024))

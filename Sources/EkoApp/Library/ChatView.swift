@@ -34,7 +34,8 @@ final class ChatSession: ObservableObject {
         segments = TranscriptText.parseFile(text)
         let info = RecordingInfo.read(item.url)
         system = CallChat.systemInstruction(title: item.name, date: info.dateText, duration: item.duration ?? segments.last?.start ?? 0,
-                                            names: NamesList.load(), segments: segments)
+                                            names: NamesList.load(), segments: segments,
+                                            participants: Participants.load(for: item.url))
         return !segments.isEmpty
     }
 
@@ -189,10 +190,13 @@ struct ChatView: View {
                 TextField("Ask about this call…", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
+                    .font(.system(size: 14))
+                    .frame(minHeight: 26, alignment: .center)   // one line sits mid-height, level with the send button
                     .focused($focused)
                     .onSubmit(send)
                 Button(action: send) {
                     Image(systemName: "arrow.up.circle.fill").font(.system(size: 22))
+                        .frame(height: 26)
                         .foregroundStyle(canSend ? Theme.accent : Color.secondary.opacity(0.4))
                 }
                 .buttonStyle(.plain)
@@ -200,7 +204,7 @@ struct ChatView: View {
                 .help("Send")
             }
             .padding(.horizontal, 14)
-            .padding(.vertical, 9)
+            .padding(.vertical, 8)
             .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(Theme.card))
             .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(Theme.hairline))
             Text("Sends this call's transcript text and your question to Gemini. No audio is sent.")

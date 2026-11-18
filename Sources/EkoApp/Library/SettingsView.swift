@@ -80,7 +80,7 @@ struct SettingsView: View {
         } header: {
             Text("Transcripts and summaries")
         } footer: {
-            Text("Each call's audio is sent to Google Gemini to be transcribed, then the transcript text to be summarised.")
+            Text("Each call's audio goes to Google Gemini for the transcript, then the text for the summary. Free keys allow about 20 requests a day (an hour-long call uses about 5) and Google may use free-tier data to improve its products; enable billing in AI Studio for no limit and no such use.")
                 .font(.caption).foregroundStyle(Theme.secondary)
         }
     }
@@ -98,8 +98,9 @@ struct SettingsView: View {
         } else {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Gemini API key")
-                Text("1. Click Get a Key and sign in with your Google account.  2. Click Create API key and copy it.  3. Paste it here and click Save.")
+                Text("Free, about 2 minutes. Optional: recording works without it.\n1. Click Get a Key and sign in with a Google account.\n2. Click Create API key, then copy the key.\n3. Paste it here and click Save. When macOS asks for Keychain access, click Always Allow.")
                     .font(.caption).foregroundStyle(Theme.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                 HStack {
                     SecureField("Paste your Gemini API key", text: $keyDraft)
                         .textFieldStyle(.roundedBorder)

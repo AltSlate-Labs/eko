@@ -60,7 +60,7 @@ public enum CallChat {
     """
 
     public static func systemInstruction(title: String, date: String, duration: TimeInterval, names: NamesList,
-                                         segments: [Segment]) -> String {
+                                         segments: [Segment], participants: [Participant]? = nil) -> String {
         let labelled = segments.contains { $0.speaker != .unlabelled }
         // The transcript goes in last, so text in it that looks like a placeholder is never replaced.
         return template
@@ -68,7 +68,7 @@ public enum CallChat {
             .replacingOccurrences(of: "{{title}}", with: title)
             .replacingOccurrences(of: "{{date}}", with: date)
             .replacingOccurrences(of: "{{duration}}", with: TranscriptText.clock(duration))
-            .replacingOccurrences(of: "{{speakers}}", with: SummaryPrompt.speakersLine(labelled: labelled, me: names.me))
+            .replacingOccurrences(of: "{{speakers}}", with: SummaryPrompt.speakersLine(labelled: labelled, me: names.me, participants: participants))
             .replacingOccurrences(of: "{{transcript}}", with: TranscriptText.linesForPrompt(segments))
     }
 
