@@ -97,13 +97,16 @@ final class FakeSpeech: SpeechEngine {
     /// Parts are transcribed in parallel, so the record is guarded.
     var calls: [AudioPart] { lock.withLock { recorded } }
     var failFirstWithMaxTokens = false
+    /// Calls (1-based) answered with HTTP 503.
+    var overloadedOnCalls: Set<Int> = []
     func transcribe(_ part: AudioPart, names: NamesList) async throws -> SpeechResult {
-        let fail = lock.withLock {
+        let (fail, overloaded) = lock.withLock {
             recorded.append(part)
             defer { failFirstWithMaxTokens = false }
-            return failFirstWithMaxTokens
+            return (failFirstWithMaxTokens, overloadedOnCalls.contains(recorded.count))
         }
         if fail { throw GeminiError.maxTokens }
+        if overloaded { throw GeminiError.server(503) }
         let text = part.speaker == .you ? "[00:00:01] Hello from me\n[00:00:04] Theek hai" : "[00:02] Hi from them"
         return SpeechResult(segments: TranscriptText.parseModelOutput(text, speaker: part.speaker).segments,
                             usage: Usage(inputTokens: 10, outputTokens: 2), nonLatin: 0)
@@ -122,11 +125,55 @@ final class FakeSummary: SummaryEngine {
 }
 
 struct NotesPipelineTests {
+    /// Finished pieces go to a test folder, never ~/Library/Application Support/Eko.
+    let cacheDir = TempDir()
+
     func pipeline(_ speech: FakeSpeech, _ summary: FakeSummary) -> NotesPipeline {
         var p = NotesPipeline(speech: speech, summary: summary, settings: NotesSettings(), names: NamesList(text: "me: Nirdesh"),
                               template: (SummaryPrompt.defaultTemplate, "built-in default"))
         p.log = { _ in }
+        p.partCacheRoot = cacheDir.url
         return p
+    }
+
+    @Test func retryOnlySendsThePartsStillMissing() async throws {
+        let tmp = TempDir()
+        let rec = tmp.url.appendingPathComponent("r.m4a")
+        try makeRecording(rec, seconds: 4, left: true, right: true)
+        let speech = FakeSpeech(), summary = FakeSummary()
+        speech.overloadedOnCalls = [2]
+        await #expect(throws: GeminiError.self) { try await pipeline(speech, summary).run(rec) }
+        #expect(speech.calls.count == 2)
+        let kept = try FileManager.default.contentsOfDirectory(at: cacheDir.url, includingPropertiesForKeys: nil)
+        #expect(kept.count == 1)
+        let piece = try #require(FileManager.default.contentsOfDirectory(at: kept[0], includingPropertiesForKeys: nil).first)
+        #expect((try FileManager.default.attributesOfItem(atPath: piece.path)[.posixPermissions] as? Int) == 0o600)
+        #expect((try FileManager.default.attributesOfItem(atPath: kept[0].path)[.posixPermissions] as? Int) == 0o700)
+
+        let outcome = try await pipeline(speech, summary).run(rec)
+        #expect(speech.calls.count == 3)   // only the part that failed
+        #expect(speech.calls[2].speaker == speech.calls[1].speaker)
+        #expect(outcome.transcribed)
+        let transcript = try String(contentsOf: OutputFile.transcriptURL(for: rec), encoding: .utf8)
+        #expect(transcript.contains("[00:00:01] You: Hello from me\n[00:00:02] Others: Hi from them\n[00:00:04] You: Theek hai"))
+        #expect(try FileManager.default.contentsOfDirectory(atPath: cacheDir.url.path).isEmpty)   // removed once written
+    }
+
+    @Test func changedRecordingDoesNotReuseParts() async throws {
+        let tmp = TempDir()
+        let rec = tmp.url.appendingPathComponent("r.m4a")
+        try makeRecording(rec, seconds: 4, left: true, right: true)
+        let root = cacheDir.url
+        let a = try #require(PartCache(root: root, recording: rec, chunkSeconds: 2400, model: "m"))
+        let b = try #require(PartCache(root: root, recording: rec, chunkSeconds: 1800, model: "m"))
+        let c = try #require(PartCache(root: root, recording: rec, chunkSeconds: 2400, model: "other"))
+        #expect(Set([a.dir, b.dir, c.dir]).count == 3)
+        let part = AudioPart(file: rec, speaker: .you, offset: 0, duration: 4)
+        a.save(SpeechResult(segments: [Segment(start: 1, speaker: .you, text: "hi")], usage: Usage(), nonLatin: 0), for: part)
+        #expect(a.load(part)?.segments.first?.text == "hi")
+        #expect(b.load(part) == nil)
+        PartCache.removeStale(root: root, now: Date().addingTimeInterval(PartCache.keepFor + 60))
+        #expect(a.load(part) == nil)
     }
 
     @Test func endToEndWritesTranscriptAndSummary() async throws {
@@ -210,7 +257,9 @@ struct NotesQueueTests {
 
         reloaded.retryLater(rec.path, error: "offline", now: t0)   // 30 min
         reloaded.retryLater(rec.path, error: "offline", now: t0)   // after the quota reset
-        #expect(reloaded.jobs.first?.nextTryAt == GeminiClient.nextQuotaReset(after: t0).addingTimeInterval(120))
+        let reset = GeminiClient.nextQuotaReset(after: t0)
+        let wait = try #require(reloaded.jobs.first?.nextTryAt).timeIntervalSince(reset)
+        #expect(NotesQueue.afterResetDelay.contains(wait))   // 10–30 min after the reset
         for _ in 0..<2 { reloaded.retryLater(rec.path, error: "offline", now: t0) }
         #expect(!reloaded.retryLater(rec.path, error: "offline", now: t0))
         #expect(reloaded.failedJobs.count == 1)
@@ -219,6 +268,69 @@ struct NotesQueueTests {
         reloaded.complete(rec.path)
         #expect(NotesQueue(url: file).jobs.isEmpty)
         #expect((try FileManager.default.attributesOfItem(atPath: file.path)[.posixPermissions] as? Int) == 0o600)
+    }
+}
+
+struct NotesQueuePolicyTests {
+    @Test func newestJobRunsFirst() throws {
+        let tmp = TempDir()
+        let q = NotesQueue(url: tmp.url.appendingPathComponent("q.json"))
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let old = tmp.url.appendingPathComponent("old.m4a"), new = tmp.url.appendingPathComponent("new.m4a")
+        for f in [old, new] { try Data([0]).write(to: f) }
+        q.enqueue(old, now: t0)
+        q.enqueue(new, now: t0.addingTimeInterval(86_400))
+        #expect(q.nextDue(now: t0.addingTimeInterval(86_400))?.url.lastPathComponent == "new.m4a")
+    }
+
+    @Test func overloadPausesWholeQueueLongerEachTimeUntilASuccess() throws {
+        let tmp = TempDir()
+        let file = tmp.url.appendingPathComponent("q.json")
+        let a = tmp.url.appendingPathComponent("a.m4a"), b = tmp.url.appendingPathComponent("b.m4a")
+        for f in [a, b] { try Data([0]).write(to: f) }
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        let q = NotesQueue(url: file)
+        q.enqueue(a, now: t0)
+        q.enqueue(b, now: t0)
+        var now = t0
+        for expected in [1800.0, 3600, 7200, 14_400, 14_400] {
+            q.pauseForOverload(error: "503", now: now)
+            #expect(q.pausedForOverload)
+            #expect(q.pausedUntil == now.addingTimeInterval(expected))
+            #expect(q.nextDue(now: now.addingTimeInterval(expected - 1)) == nil)   // no job runs, not just this one
+            now = now.addingTimeInterval(expected + 1)
+            #expect(q.nextDue(now: now) != nil)
+            #expect(!q.pausedForOverload)
+        }
+        #expect(q.jobs.allSatisfy { $0.attempts == 0 && !$0.failed })   // overloads do not count against jobs
+        #expect(NotesQueue(url: file).overloadStreak == 5)                // survives a restart
+        q.complete(a.path)
+        q.pauseForOverload(error: "503", now: now)
+        #expect(q.pausedUntil == now.addingTimeInterval(1800))           // back to 30 min after a success
+    }
+
+    @Test func quotaPauseEndsTenToThirtyMinutesAfterTheReset() throws {
+        let tmp = TempDir()
+        let q = NotesQueue(url: tmp.url.appendingPathComponent("q.json"))
+        let reset = Date(timeIntervalSince1970: 2_000_000)
+        for _ in 0..<20 {
+            q.pause(untilReset: reset, error: "quota")
+            #expect(NotesQueue.afterResetDelay.contains(try #require(q.pausedUntil).timeIntervalSince(reset)))
+            #expect(!q.pausedForOverload)
+        }
+    }
+
+    @Test func networkErrorsNeverUseUpTries() throws {
+        let tmp = TempDir()
+        let q = NotesQueue(url: tmp.url.appendingPathComponent("q.json"))
+        let rec = tmp.url.appendingPathComponent("r.m4a")
+        try Data([0]).write(to: rec)
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        q.enqueue(rec, now: t0)
+        for _ in 0..<20 { q.retryAfterNetworkError(rec.path, error: "timed out", now: t0) }
+        let job = try #require(q.jobs.first)
+        #expect(job.attempts == 0 && !job.failed)
+        #expect(job.nextTryAt == t0.addingTimeInterval(900))
     }
 }
 

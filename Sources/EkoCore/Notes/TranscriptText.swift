@@ -4,7 +4,7 @@ public enum Speaker: String, Codable, Equatable {
     case you = "You", others = "Others", unlabelled = ""
 }
 
-public struct Segment: Equatable {
+public struct Segment: Equatable, Codable {
     public var start: TimeInterval
     public var speaker: Speaker
     public var text: String

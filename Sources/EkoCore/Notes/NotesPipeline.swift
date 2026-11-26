@@ -51,6 +51,8 @@ public final class NotesPipeline {
     /// Parts go one at a time: in parallel they hit the per-minute limits, and when Gemini is overloaded every
     /// part's failed tries count against the daily quota.
     static let maxParallel = 1
+    /// Where finished pieces wait for the rest of their recording (PartCache); nil keeps nothing.
+    var partCacheRoot: URL? = PartCache.defaultRoot
 
     public init(speech: SpeechEngine, summary: SummaryEngine, settings: NotesSettings = .load(),
                 names: NamesList = .load(), template: (template: String, source: String) = SummaryPrompt.loadTemplate()) {
@@ -85,6 +87,7 @@ public final class NotesPipeline {
             duration = made.duration
             outcome.usage = made.usage
             try OutputFile.write(made.text, to: transcriptURL, overwrite: options.overwrite)
+            made.cache?.remove()
             outcome.transcribed = true
             log(String(format: "%@: transcript written, %d lines, %.0f s so far", recording.lastPathComponent, segments.count, Date().timeIntervalSince(started)))
         }
@@ -120,6 +123,7 @@ public final class NotesPipeline {
         var segments: [Segment]
         var duration: TimeInterval
         var usage: Usage
+        var cache: PartCache?
     }
 
     func transcribe(_ recording: URL, info: RecordingInfo, producer: String, progress: @escaping (Progress) -> Void) async throws -> Made {
@@ -129,24 +133,35 @@ public final class NotesPipeline {
 
         let channels = try AudioPrep.channelCount(of: recording)
         let sides = AudioPrep.sides(for: info, channelCount: channels)
+        let chunkSeconds = settings.chunkMinutes * 60
         let prepared = try await Task.detached(priority: .utility) {
-            try AudioPrep.prepare(recording, sides: sides, chunkSeconds: self.settings.chunkMinutes * 60, into: dir)
+            try AudioPrep.prepare(recording, sides: sides, chunkSeconds: chunkSeconds, into: dir)
         }.value
         let parts = prepared.parts
         log("\(recording.lastPathComponent): \(parts.count) part(s), \(Int(prepared.duration)) s; silent: \(prepared.silent.map { $0 == .unlabelled ? "mix" : $0.rawValue })")
 
-        var results = [SpeechResult?](repeating: nil, count: parts.count)
-        var done = 0
-        progress(.transcribing(done: 0, total: parts.count))
+        let cache = partCacheRoot.flatMap { root -> PartCache? in
+            PartCache.removeStale(root: root)
+            return PartCache(root: root, recording: recording, chunkSeconds: chunkSeconds, model: speech.info.model)
+        }
+        var results = parts.map { cache?.load($0) }
+        var done = results.filter { $0 != nil }.count
+        if done > 0 { log("\(recording.lastPathComponent): \(done) of \(parts.count) part(s) already done, not sent again") }
+        let missing = parts.indices.filter { results[$0] == nil }
+        progress(.transcribing(done: done, total: parts.count))
         try await withThrowingTaskGroup(of: (Int, SpeechResult).self) { group in
             var next = 0
             func launch() {
-                guard next < parts.count else { return }
-                let i = next
+                guard next < missing.count else { return }
+                let i = missing[next]
                 next += 1
-                group.addTask { (i, try await self.transcribePart(parts[i], dir: dir)) }
+                group.addTask {
+                    let result = try await self.transcribePart(parts[i], dir: dir)
+                    cache?.save(result, for: parts[i])
+                    return (i, result)
+                }
             }
-            for _ in 0..<min(Self.maxParallel, parts.count) { launch() }
+            for _ in 0..<min(Self.maxParallel, missing.count) { launch() }
             while let (i, result) = try await group.next() {
                 results[i] = result
                 done += 1
@@ -181,7 +196,7 @@ public final class NotesPipeline {
             engine: "\(speech.info.label) (\(speech.info.location)) · \(producer)",
             labelled: sides.count == 2, checks: checks)
         return Made(text: TranscriptText.render(header: header, segments: merged), segments: merged,
-                    duration: prepared.duration, usage: usage)
+                    duration: prepared.duration, usage: usage, cache: cache)
     }
 
     /// One part; if the answer was cut off (too long), split the part at a quiet moment and try the halves once.
