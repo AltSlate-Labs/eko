@@ -108,9 +108,10 @@ public final class GeminiClient {
     var now: () -> Date = Date.init
     var log: (String) -> Void = { RecordingSession.dlog("notes: \($0)") }
     /// Failed requests (429, 503) count against the free daily quota (~20 a day), so retry little here; the queue
-    /// waits 15–30 minutes before the next try (NotesQueue.retryDelays).
+    /// waits 15–30 minutes before the next try (NotesQueue.retryDelays), or pauses
+    /// everything 30 min to 4 h when Gemini stays overloaded (NotesQueue.overloadDelays).
     static let rateDelays: [TimeInterval] = [30, 60]
-    static let serverDelays: [TimeInterval] = [20]
+    static let serverDelays: [TimeInterval] = [120]
     /// A request that never reached Google costs no quota.
     static let networkDelays: [TimeInterval] = [5, 15, 45, 120]
 

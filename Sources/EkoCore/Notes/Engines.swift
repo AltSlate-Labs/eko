@@ -13,7 +13,7 @@ public struct EngineInfo: Equatable {
     public var label: String { "\(name) \(model)" }
 }
 
-public struct SpeechResult {
+public struct SpeechResult: Codable {
     /// Times relative to the start of the part.
     public var segments: [Segment]
     public var usage: Usage
@@ -74,8 +74,9 @@ public struct GeminiSpeech: SpeechEngine {
         let audio = try Data(contentsOf: part.file)
         var usage = Usage()
         var best: (parsed: TranscriptText.Parsed, nonLatin: Double, pastEnd: Double, paragraphs: Double)?
-        // At most two tries: again if the answer is unparseable, has times past the end of the audio, is
-        // not in Roman script, or puts speech in long paragraphs without times.
+        // At most two tries: again if the answer is unparseable, has times past the end of the audio, or is
+        // not in Roman script. Long paragraphs without times are not worth a second request (each one counts
+        // against the free daily quota): they are split into sentences below.
         for attempt in 0..<2 {
             var request = GeminiClient.Request(model: model, text: TranscriptionPrompt.text(names: names, firmer: attempt > 0 && (best?.nonLatin ?? 0) > 0.01),
                                                audio: audio, thinkingLevel: thinkingLevel)
@@ -89,11 +90,11 @@ public struct GeminiSpeech: SpeechEngine {
             let paragraphs = TranscriptText.paragraphFraction(parsed.segments)
             let candidate = (parsed, nonLatin, pastEnd, paragraphs)
             if best == nil || score(candidate) < score(best!) { best = candidate }
-            if parsed.unparsedFraction <= 0.2 && pastEnd <= 0.2 && nonLatin <= 0.01 && paragraphs <= 0.1 { break }
-            client.log(String(format: "part %@ retry: %.0f%% unparsed lines, %.0f%% past the end, %.1f%% non-Latin letters, %.0f%% in paragraphs",
-                              part.file.lastPathComponent, parsed.unparsedFraction * 100, pastEnd * 100, nonLatin * 100, paragraphs * 100))
+            if parsed.unparsedFraction <= 0.2 && pastEnd <= 0.2 && nonLatin <= 0.01 { break }
+            client.log(String(format: "part %@ retry: %.0f%% unparsed lines, %.0f%% past the end, %.1f%% non-Latin letters",
+                              part.file.lastPathComponent, parsed.unparsedFraction * 100, pastEnd * 100, nonLatin * 100))
         }
-        // Still paragraphs after the retry: split them into sentences with estimated times.
+        // Paragraphs: split them into sentences with estimated times.
         let (segments, split) = TranscriptText.splitParagraphs(best!.parsed.segments, end: part.duration)
         if split > 0 { client.log("part \(part.file.lastPathComponent): split \(split) paragraph(s) into sentences with estimated times") }
         return SpeechResult(segments: segments, usage: usage, nonLatin: best!.nonLatin)

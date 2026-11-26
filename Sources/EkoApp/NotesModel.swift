@@ -232,7 +232,11 @@ final class NotesModel: ObservableObject {
         RecordingSession.dlog("notes: \(job.url.lastPathComponent): \(text)")
         switch error {
         case let GeminiError.quotaExhausted(resetAt):
-            queue.pause(until: resetAt, error: text)
+            queue.pause(untilReset: resetAt, error: text)
+        case GeminiError.server:
+            queue.pauseForOverload(error: text)
+        case GeminiError.network:
+            queue.retryAfterNetworkError(job.path, error: text)
         case GeminiError.keyRejected:
             keyProblem = true
             queue.retryLater(job.path, error: text)
@@ -254,7 +258,9 @@ final class NotesModel: ObservableObject {
         } else if keychainRefused {
             statusLine = "Eko couldn't read the Gemini key from the Keychain. Click Retry and choose Always Allow."
         } else if let until = queue.pausedUntil, until > Date() {
-            statusLine = GeminiError.quotaExhausted(resetAt: until).localizedDescription
+            statusLine = queue.pausedForOverload
+                ? "Gemini is overloaded. Transcripts will continue at \(until.formatted(date: .omitted, time: .shortened))."
+                : GeminiError.quotaExhausted(resetAt: until).localizedDescription
         } else if let failed = queue.failedJobs.last {
             statusLine = "Transcript failed for \(failed.name): \(failed.lastError ?? "unknown error")"
         } else if maskedKey == nil, !queue.pending.isEmpty {

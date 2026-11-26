@@ -96,7 +96,7 @@ final class Box<T> {
         let sleeps = Box<[TimeInterval]>([])
         let response = try await makeClient(sleeps: sleeps).generate(.init(model: "m", text: "t"))
         #expect(response.text == "done")
-        #expect(sleeps.value == [20])
+        #expect(sleeps.value == [120])
     }
 
     /// Failed tries count against the daily quota: one retry, then the queue waits.

@@ -21,16 +21,28 @@ public struct NotesJob: Codable, Equatable {
 /// Not thread-safe: the app uses it from the main actor only.
 public final class NotesQueue {
     public private(set) var jobs: [NotesJob] = []
-    /// Set when the daily quota is used up: nothing runs before this time.
+    /// Set when the daily quota is used up or Gemini is overloaded: nothing runs before this time.
     public private(set) var pausedUntil: Date?
+    /// The current pause is for Gemini being overloaded (HTTP 503), not for the daily quota.
+    public private(set) var pausedForOverload = false
+    /// Overload pauses in a row; the next one waits longer. Back to 0 when a job completes.
+    public private(set) var overloadStreak = 0
     /// After a failed run: 15 min, 30 min, then wait for the next quota reset (nil) and try twice more, then stop
     /// until the user's Retry. At most three runs a day, so an outage cannot use up the daily quota.
     public static let retryDelays: [TimeInterval?] = [900, 1800, nil, 900, 1800]
+    /// Gemini overloaded: the whole queue waits 30 min, 1 h, 2 h, then 4 h at a time. Every failed request counts
+    /// against the free daily quota, and an overload hits every job alike, so trying the next job at once only
+    /// wastes requests.
+    public static let overloadDelays: [TimeInterval] = [1800, 3600, 7200, 14_400]
+    /// Free users all start again at the quota reset, when Gemini is busiest: wait a random 10–30 min past it.
+    public static let afterResetDelay: ClosedRange<TimeInterval> = 600...1800
     private let url: URL
 
     private struct Stored: Codable {
         var jobs: [NotesJob]
         var pausedUntil: Date?
+        var pausedForOverload: Bool?
+        var overloadStreak: Int?
     }
 
     public init(url: URL = NotesSettings.queueFile) {
@@ -41,6 +53,8 @@ public final class NotesQueue {
             if let stored = try? decoder.decode(Stored.self, from: data) {
                 jobs = stored.jobs
                 pausedUntil = stored.pausedUntil
+                pausedForOverload = stored.pausedForOverload ?? false
+                overloadStreak = stored.overloadStreak ?? 0
             }
         }
     }
@@ -85,6 +99,7 @@ public final class NotesQueue {
         if let pausedUntil {
             if pausedUntil > now { return nil }
             self.pausedUntil = nil
+            pausedForOverload = false
             save()
         }
         let missing = jobs.filter { !FileManager.default.fileExists(atPath: $0.path) }
@@ -93,7 +108,8 @@ public final class NotesQueue {
             jobs.removeAll { missing.contains($0) }
             save()
         }
-        return jobs.filter { !$0.failed && $0.nextTryAt <= now }.min { $0.nextTryAt < $1.nextTryAt }
+        // Newest first, so today's calls are not stuck behind old ones.
+        return jobs.filter { !$0.failed && $0.nextTryAt <= now }.max { $0.addedAt < $1.addedAt }
     }
 
     /// When the next waiting job becomes due (for a timer), if any.
@@ -113,6 +129,7 @@ public final class NotesQueue {
 
     public func complete(_ path: String) {
         jobs.removeAll { $0.path == path }
+        overloadStreak = 0
         save()
     }
 
@@ -123,7 +140,7 @@ public final class NotesQueue {
         jobs[i].lastError = error
         if jobs[i].attempts < Self.retryDelays.count {
             jobs[i].nextTryAt = Self.retryDelays[jobs[i].attempts].map { now.addingTimeInterval($0) }
-                ?? GeminiClient.nextQuotaReset(after: now).addingTimeInterval(120)
+                ?? Self.afterReset(GeminiClient.nextQuotaReset(after: now))
             jobs[i].attempts += 1
             save()
             return true
@@ -131,6 +148,17 @@ public final class NotesQueue {
         jobs[i].failed = true
         save()
         return false
+    }
+
+    /// Network error or no answer (offline, Mac asleep mid-upload): costs no quota, so it does not count against
+    /// the job; try again in 15 min, however often it happens.
+    public static let networkRetryDelay: TimeInterval = 900
+
+    public func retryAfterNetworkError(_ path: String, error: String, now: Date = Date()) {
+        guard let i = jobs.firstIndex(where: { $0.path == path }) else { return }
+        jobs[i].lastError = error
+        jobs[i].nextTryAt = now.addingTimeInterval(Self.networkRetryDelay)
+        save()
     }
 
     /// An error retrying cannot fix by itself (bad key, unreadable file…): wait for the user.
@@ -141,21 +169,43 @@ public final class NotesQueue {
         save()
     }
 
-    /// Daily quota used up: hold every job until the reset; the attempt does not count against the job.
+    /// A random time 10–30 min after a quota reset.
+    public static func afterReset(_ reset: Date) -> Date {
+        reset.addingTimeInterval(TimeInterval.random(in: afterResetDelay))
+    }
+
+    /// Daily quota used up: hold every job until 10–30 min after the reset; the attempt does not count against the job.
+    public func pause(untilReset reset: Date, error: String) {
+        pause(until: Self.afterReset(reset), error: error)
+    }
+
     public func pause(until date: Date, error: String) {
         pausedUntil = date
+        pausedForOverload = false
         for i in jobs.indices where !jobs[i].failed { jobs[i].lastError = error }
+        save()
+    }
+
+    /// Gemini overloaded: hold every job for 30 min, 1 h, 2 h, then 4 h; the attempt does not count against the job.
+    public func pauseForOverload(error: String, now: Date = Date()) {
+        let delay = Self.overloadDelays[min(overloadStreak, Self.overloadDelays.count - 1)]
+        pause(until: now.addingTimeInterval(delay), error: error)
+        pausedForOverload = true
+        overloadStreak += 1
         save()
     }
 
     public func resume() {
         pausedUntil = nil
+        pausedForOverload = false
         save()
     }
 
     /// The user's Retry: failed jobs (and any pause) start over.
     public func retryAll(now: Date = Date()) {
         pausedUntil = nil
+        pausedForOverload = false
+        overloadStreak = 0
         for i in jobs.indices {
             jobs[i].failed = false
             jobs[i].attempts = 0
@@ -168,7 +218,8 @@ public final class NotesQueue {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-        guard let data = try? encoder.encode(Stored(jobs: jobs, pausedUntil: pausedUntil)),
+        guard let data = try? encoder.encode(Stored(jobs: jobs, pausedUntil: pausedUntil, pausedForOverload: pausedForOverload,
+                                                        overloadStreak: overloadStreak)),
               let text = String(data: data, encoding: .utf8) else { return }
         try? FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
